@@ -1,0 +1,32 @@
+# POUW Multi-Sector Chain - Production Dependencies
+# 版本已锁定，确保构建可重现
+
+# 加密库（必须安装，启动时检查）
+ecdsa==0.19.0           # ECDSA 签名 (secp256k1)
+cryptography==42.0.8    # AES-256 加密, 哈希
+mnemonic==0.21          # BIP39 助记词标准实现
+pycryptodome==3.20.0    # 额外加密支持
+
+# P2P 网络
+websockets==12.0        # WebSocket 服务端/客户端
+aiohttp==3.9.5          # 异步 HTTP
+asyncio-dgram==2.1.2    # UDP 支持
+
+# 数据持久化
+plyvel==1.5.1           # LevelDB Python 绑定 (需要编译)
+
+# RPC 和 API
+flask==3.0.3            # HTTP RPC 服务器
+flask-cors==4.0.1       # 跨域支持
+jsonrpcserver==5.0.9    # JSON-RPC 2.0
+
+# UI (可选)
+streamlit==1.38.0       # Web UI
+pandas==2.2.2           # 数据处理
+
+# 工具
+pyyaml==6.0.1           # YAML 配置
+click==8.1.7            # CLI 工具
+python-dotenv==1.0.1    # 环境变量
+colorama==0.4.6         # 彩色终端输出
+tqdm==4.66.4            # 进度条

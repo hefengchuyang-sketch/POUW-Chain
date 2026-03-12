@@ -1,0 +1,426 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* 深色云控制台主题 - 类似AWS/阿里云 */
+  --console-bg: #0d1117;
+  --console-surface: #161b22;
+  --console-border: #30363d;
+  --console-primary: #238636;
+  --console-accent: #1f6feb;
+  --console-warning: #d29922;
+  --console-error: #f85149;
+  --console-text: #c9d1d9;
+  --console-text-muted: #8b949e;
+  
+  /* 代码高亮色 */
+  --code-bg: #0d1117;
+  --code-string: #a5d6ff;
+  --code-keyword: #ff7b72;
+  --code-function: #d2a8ff;
+  --code-comment: #8b949e;
+}
+
+body {
+  margin: 0;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background: var(--console-bg);
+  min-height: 100vh;
+  color: var(--console-text);
+}
+
+/* 滚动条样式 */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--console-surface);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--console-border);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #484f58;
+}
+
+/* ===== 卡片样式 ===== */
+.card {
+  @apply bg-console-surface rounded-lg border border-console-border p-5;
+}
+
+.card-hover {
+  @apply transition-all duration-200 hover:border-console-accent/50 hover:shadow-lg hover:shadow-console-accent/5;
+}
+
+/* ===== 按钮样式 ===== */
+.btn-primary {
+  @apply bg-console-primary text-white font-medium py-2 px-4 rounded-md
+         transition-all duration-150 hover:bg-green-700 active:scale-[0.98]
+         border border-transparent;
+}
+
+.btn-secondary {
+  @apply bg-console-surface border border-console-border text-console-text font-medium py-2 px-4 rounded-md
+         transition-all duration-150 hover:bg-console-border/30 active:scale-[0.98];
+}
+
+.btn-accent {
+  @apply bg-console-accent text-white font-medium py-2 px-4 rounded-md
+         transition-all duration-150 hover:bg-blue-700 active:scale-[0.98];
+}
+
+.btn-danger {
+  @apply bg-console-error text-white font-medium py-2 px-4 rounded-md
+         transition-all duration-150 hover:bg-red-700 active:scale-[0.98];
+}
+
+.btn-ghost {
+  @apply text-console-text-muted font-medium py-2 px-4 rounded-md
+         transition-all duration-150 hover:bg-console-border/30 hover:text-console-text;
+}
+
+/* ===== 输入框样式 ===== */
+.input {
+  @apply w-full bg-console-bg border border-console-border rounded-md px-3 py-2 text-console-text
+         placeholder:text-console-text-muted focus:outline-none focus:border-console-accent focus:ring-1 focus:ring-console-accent;
+}
+
+.input-sm {
+  @apply input py-1.5 text-sm;
+}
+
+/* ===== 状态标签 ===== */
+.badge {
+  @apply inline-flex items-center px-2 py-0.5 rounded text-xs font-medium;
+}
+
+.badge-success {
+  @apply bg-green-500/15 text-green-400 border border-green-500/30;
+}
+
+.badge-warning {
+  @apply bg-yellow-500/15 text-yellow-400 border border-yellow-500/30;
+}
+
+.badge-error {
+  @apply bg-red-500/15 text-red-400 border border-red-500/30;
+}
+
+.badge-info {
+  @apply bg-blue-500/15 text-blue-400 border border-blue-500/30;
+}
+
+.badge-neutral {
+  @apply bg-gray-500/15 text-gray-400 border border-gray-500/30;
+}
+
+/* 状态点 */
+.status-dot {
+  @apply w-2 h-2 rounded-full;
+}
+
+.status-dot-online {
+  @apply bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.5)];
+}
+
+.status-dot-offline {
+  @apply bg-gray-500;
+}
+
+.status-dot-busy {
+  @apply bg-yellow-500 shadow-[0_0_8px_rgba(234,179,8,0.5)];
+}
+
+.status-dot-error {
+  @apply bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.5)];
+}
+
+/* ===== 进度条 ===== */
+.progress-bar {
+  @apply h-1.5 bg-console-border rounded-full overflow-hidden;
+}
+
+.progress-fill {
+  @apply h-full bg-console-primary rounded-full transition-all duration-300;
+}
+
+.progress-fill-accent {
+  @apply h-full bg-console-accent rounded-full transition-all duration-300;
+}
+
+/* ===== 表格样式 ===== */
+.table-container {
+  @apply overflow-x-auto rounded-lg border border-console-border;
+}
+
+table {
+  @apply w-full text-sm;
+}
+
+thead {
+  @apply bg-console-surface border-b border-console-border;
+}
+
+th {
+  @apply text-left font-medium text-console-text-muted py-3 px-4 whitespace-nowrap;
+}
+
+tbody tr {
+  @apply border-b border-console-border last:border-0 hover:bg-console-surface/50;
+}
+
+td {
+  @apply py-3 px-4;
+}
+
+/* ===== 代码区域 ===== */
+.code-block {
+  @apply bg-code-bg rounded-lg border border-console-border p-4 font-mono text-sm overflow-x-auto;
+}
+
+.terminal {
+  @apply bg-black rounded-lg border border-console-border p-4 font-mono text-sm text-green-400 overflow-x-auto;
+}
+
+.terminal-header {
+  @apply flex items-center gap-2 mb-3 pb-3 border-b border-console-border;
+}
+
+.terminal-dot {
+  @apply w-3 h-3 rounded-full;
+}
+
+/* ===== 选项卡 ===== */
+.tabs {
+  @apply flex gap-1 border-b border-console-border;
+}
+
+.tab {
+  @apply px-4 py-2 text-sm font-medium text-console-text-muted transition-colors
+         border-b-2 border-transparent hover:text-console-text hover:bg-console-surface/50;
+}
+
+.tab-active {
+  @apply text-console-text border-console-accent;
+}
+
+/* ===== 侧边栏 ===== */
+.sidebar {
+  @apply bg-console-surface border-r border-console-border;
+}
+
+.sidebar-item {
+  @apply flex items-center gap-3 px-4 py-2.5 text-sm text-console-text-muted
+         transition-colors hover:text-console-text hover:bg-console-border/30 rounded-md mx-2;
+}
+
+.sidebar-item-active {
+  @apply text-console-text bg-console-accent/15 border-l-2 border-console-accent mx-0 rounded-none;
+}
+
+/* ===== 面包屑 ===== */
+.breadcrumb {
+  @apply flex items-center gap-2 text-sm text-console-text-muted;
+}
+
+.breadcrumb a {
+  @apply hover:text-console-text transition-colors;
+}
+
+/* ===== 警告框 ===== */
+.alert {
+  @apply p-4 rounded-lg border flex items-start gap-3;
+}
+
+.alert-info {
+  @apply bg-blue-500/10 border-blue-500/30 text-blue-400;
+}
+
+.alert-success {
+  @apply bg-green-500/10 border-green-500/30 text-green-400;
+}
+
+.alert-warning {
+  @apply bg-yellow-500/10 border-yellow-500/30 text-yellow-400;
+}
+
+.alert-error {
+  @apply bg-red-500/10 border-red-500/30 text-red-400;
+}
+
+/* ===== 文件树 ===== */
+.file-tree {
+  @apply text-sm font-mono;
+}
+
+.file-tree-item {
+  @apply flex items-center gap-2 py-1 px-2 hover:bg-console-border/30 rounded cursor-pointer;
+}
+
+.file-tree-item-active {
+  @apply bg-console-accent/15 text-console-text;
+}
+
+/* ===== 工具提示 ===== */
+.tooltip {
+  @apply absolute z-50 px-2 py-1 text-xs bg-console-surface border border-console-border rounded shadow-lg;
+}
+
+/* ===== 模态框 ===== */
+.modal-overlay {
+  @apply fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center;
+}
+
+.modal {
+  @apply bg-console-surface border border-console-border rounded-lg shadow-xl max-w-lg w-full mx-4;
+}
+
+.modal-header {
+  @apply px-6 py-4 border-b border-console-border font-medium;
+}
+
+.modal-body {
+  @apply px-6 py-4;
+}
+
+.modal-footer {
+  @apply px-6 py-4 border-t border-console-border flex justify-end gap-3;
+}
+
+/* ===== 下拉菜单 ===== */
+.dropdown {
+  @apply absolute z-50 bg-console-surface border border-console-border rounded-lg shadow-xl py-1 min-w-[160px];
+}
+
+.dropdown-item {
+  @apply px-4 py-2 text-sm text-console-text hover:bg-console-border/30 cursor-pointer flex items-center gap-2;
+}
+
+/* ===== 统计卡片 ===== */
+.stat-card {
+  @apply card flex flex-col;
+}
+
+.stat-value {
+  @apply text-2xl font-bold text-console-text;
+}
+
+.stat-label {
+  @apply text-sm text-console-text-muted mt-1;
+}
+
+.stat-change-up {
+  @apply text-green-400 text-sm flex items-center gap-1;
+}
+
+.stat-change-down {
+  @apply text-red-400 text-sm flex items-center gap-1;
+}
+
+/* ===== 加载状态 ===== */
+.skeleton {
+  @apply animate-pulse bg-console-border rounded;
+}
+
+.spinner {
+  @apply animate-spin rounded-full border-2 border-console-border border-t-console-accent;
+}
+
+/* ===== GPU 板块卡片 ===== */
+.sector-card {
+  @apply card card-hover cursor-pointer relative overflow-hidden;
+}
+
+.sector-card::before {
+  content: '';
+  @apply absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-console-accent to-console-primary;
+}
+
+/* ===== 订单簿样式 ===== */
+.orderbook-row {
+  @apply flex items-center justify-between py-1.5 px-2 text-xs font-mono hover:bg-console-border/20;
+}
+
+.orderbook-buy {
+  @apply text-green-400;
+}
+
+.orderbook-sell {
+  @apply text-red-400;
+}
+
+/* ===== 钱包余额卡片 ===== */
+.wallet-balance {
+  @apply card relative overflow-hidden;
+}
+
+.wallet-balance::before {
+  content: '';
+  @apply absolute inset-0 bg-gradient-to-br from-console-accent/10 to-transparent;
+}
+
+/* ===== VSCode 风格编辑器区域 ===== */
+.editor-container {
+  @apply bg-console-bg rounded-lg border border-console-border overflow-hidden;
+}
+
+.editor-tabs {
+  @apply flex bg-console-surface border-b border-console-border;
+}
+
+.editor-tab {
+  @apply px-4 py-2 text-sm text-console-text-muted border-r border-console-border
+         hover:bg-console-border/30 flex items-center gap-2 cursor-pointer;
+}
+
+.editor-tab-active {
+  @apply bg-console-bg text-console-text border-b-2 border-b-console-accent -mb-px;
+}
+
+.editor-sidebar {
+  @apply w-60 bg-console-surface border-r border-console-border overflow-y-auto;
+}
+
+.editor-main {
+  @apply flex-1 overflow-auto;
+}
+
+.editor-terminal {
+  @apply bg-black border-t border-console-border;
+}
+
+/* ===== 日志输出 ===== */
+.log-line {
+  @apply font-mono text-sm py-0.5 px-4 hover:bg-console-surface/50;
+}
+
+.log-stdout {
+  @apply text-console-text;
+}
+
+.log-stderr {
+  @apply text-red-400;
+}
+
+.log-timestamp {
+  @apply text-console-text-muted mr-4;
+}
+
+/* ===== 响应式调整 ===== */
+@media (max-width: 768px) {
+  .card {
+    @apply p-4;
+  }
+  
+  .stat-value {
+    @apply text-xl;
+  }
+}

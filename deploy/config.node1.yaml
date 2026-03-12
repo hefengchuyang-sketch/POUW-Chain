@@ -1,0 +1,41 @@
+# POUW Multi-Sector Chain - 3 节点公网部署配置
+# 节点 1 (Bootstrap / 种子节点)
+# 部署前修改 external_ip 和 miner_address
+
+node:
+  id: "pouw-seed-1"
+  role: "full"
+
+network:
+  type: "mainnet"
+  chain_id: 9333
+  p2p:
+    host: "0.0.0.0"
+    port: 9333
+    external_ip: "118.195.149.137"
+    bootstrap_nodes:
+      - "10.206.0.16:9333"
+      - "10.206.0.47:9333"
+    max_peers: 50
+  rpc:
+    enabled: true
+    host: "0.0.0.0"
+    port: 8545
+    cors_origins: ["http://127.0.0.1:8545", "http://localhost:8545", "http://localhost:3000"]
+
+mining:
+  enabled: true
+  miner_address: ""  # 启动后自动使用默认钱包地址
+  threads: 2
+
+storage:
+  data_dir: "/data"
+  db_engine: "sqlite"
+
+consensus:
+  target_block_time: 30
+  initial_difficulty: 4
+  
+logging:
+  level: "INFO"
+  file: "/logs/node.log"

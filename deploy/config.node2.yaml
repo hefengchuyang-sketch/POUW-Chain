@@ -1,0 +1,40 @@
+# POUW Multi-Sector Chain - 节点 2 配置
+# 普通全节点 + 挖矿
+
+node:
+  id: "pouw-node-2"
+  role: "miner"
+
+network:
+  type: "mainnet"
+  chain_id: 9333
+  p2p:
+    host: "0.0.0.0"
+    port: 9333
+    external_ip: "1.13.141.28"
+    bootstrap_nodes:
+      - "10.206.0.14:9333"
+      - "10.206.0.47:9333"
+    max_peers: 50
+  rpc:
+    enabled: true
+    host: "0.0.0.0"
+    port: 8545
+    cors_origins: ["http://127.0.0.1:8545", "http://localhost:8545", "http://localhost:3000"]
+
+mining:
+  enabled: true
+  miner_address: ""  # 启动后自动使用默认钱包地址
+  threads: 2
+
+storage:
+  data_dir: "/data"
+  db_engine: "sqlite"
+
+consensus:
+  target_block_time: 30
+  initial_difficulty: 4
+
+logging:
+  level: "INFO"
+  file: "/logs/node.log"

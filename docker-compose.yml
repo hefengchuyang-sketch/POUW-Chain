@@ -1,0 +1,245 @@
+# POUW Multi-Sector Chain - Docker Compose 配置
+#
+# 使用方法:
+#   docker-compose up -d                    # 启动所有服务
+#   docker-compose up -d node1 node2        # 启动指定节点
+#   docker-compose logs -f                  # 查看日志
+#   docker-compose down                     # 停止所有服务
+
+version: '3.8'
+
+services:
+  # ============== Bootstrap 节点 ==============
+  bootstrap:
+    build: .
+    container_name: pouw-bootstrap
+    hostname: bootstrap
+    command:
+      - "--port=9333"
+      - "--data-dir=/data"
+    ports:
+      - "127.0.0.1:9333:9333"    # P2P（仅本地访问）
+      - "127.0.0.1:8545:8545"    # RPC（仅本地访问）
+    volumes:
+      - bootstrap-data:/data
+      - bootstrap-wallets:/wallets
+    networks:
+      - pouw-network
+    restart: unless-stopped
+    environment:
+      - POUW_NODE_NAME=Bootstrap-1
+      - POUW_NETWORK=mainnet
+      - POUW_RPC_HOST=0.0.0.0
+      - MAINCOIN_PRODUCTION=true
+      # 生产环境必须设置: export POUW_ADMIN_KEY=$(openssl rand -hex 32)
+      - POUW_ADMIN_KEY=${POUW_ADMIN_KEY:-}
+      # TLS CA 证书路径（可选，启用后校验对端证书）
+      - MAINCOIN_CA_CERT=${MAINCOIN_CA_CERT:-}
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 4G
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+
+  # ============== 普通节点 1 ==============
+  node1:
+    build: .
+    container_name: pouw-node1
+    hostname: node1
+    depends_on:
+      - bootstrap
+    command:
+      - "--port=9333"
+      - "--data-dir=/data"
+      - "--bootstrap=bootstrap:9333"
+    ports:
+      - "127.0.0.1:9334:9333"    # P2P
+      - "127.0.0.1:8546:8545"    # RPC
+    volumes:
+      - node1-data:/data
+      - node1-wallets:/wallets
+    networks:
+      - pouw-network
+    restart: unless-stopped
+    environment:
+      - POUW_NODE_NAME=Node-1
+      - MAINCOIN_PRODUCTION=true
+      - POUW_ADMIN_KEY=${POUW_ADMIN_KEY:-}
+      - MAINCOIN_CA_CERT=${MAINCOIN_CA_CERT:-}
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 4G
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+
+  # ============== 普通节点 2 ==============
+  node2:
+    build: .
+    container_name: pouw-node2
+    hostname: node2
+    depends_on:
+      - bootstrap
+    command:
+      - "--port=9333"
+      - "--data-dir=/data"
+      - "--bootstrap=bootstrap:9333"
+    ports:
+      - "127.0.0.1:9335:9333"    # P2P
+      - "127.0.0.1:8547:8545"    # RPC
+    volumes:
+      - node2-data:/data
+      - node2-wallets:/wallets
+    networks:
+      - pouw-network
+    restart: unless-stopped
+    environment:
+      - POUW_NODE_NAME=Node-2
+      - MAINCOIN_PRODUCTION=true
+      - POUW_ADMIN_KEY=${POUW_ADMIN_KEY:-}
+      - MAINCOIN_CA_CERT=${MAINCOIN_CA_CERT:-}
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 4G
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+
+  # ============== 矿工节点 ==============
+  miner:
+    build: .
+    container_name: pouw-miner
+    hostname: miner
+    depends_on:
+      - bootstrap
+    command:
+      - "--port=9333"
+      - "--data-dir=/data"
+      - "--bootstrap=bootstrap:9333"
+      - "--mining"
+    ports:
+      - "127.0.0.1:9336:9333"    # P2P
+      - "127.0.0.1:8548:8545"    # RPC
+    volumes:
+      - miner-data:/data
+      - miner-wallets:/wallets
+    networks:
+      - pouw-network
+    restart: unless-stopped
+    environment:
+      - POUW_NODE_NAME=Miner-1
+      - MAINCOIN_PRODUCTION=true
+      - POUW_ADMIN_KEY=${POUW_ADMIN_KEY:-}
+      - MAINCOIN_CA_CERT=${MAINCOIN_CA_CERT:-}
+    deploy:
+      resources:
+        limits:
+          cpus: '8'
+          memory: 8G
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+    # GPU 支持（需要 nvidia-docker）
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+
+  # ============== Web UI ==============
+  # 注意: WebUI 基于 React 前端，需要先 npm build，暂时禁用
+  # webui:
+  #   build:
+  #     context: ./frontend
+  #     dockerfile: Dockerfile
+  #   container_name: pouw-webui
+  #   hostname: webui
+  #   depends_on:
+  #     - bootstrap
+  #   ports:
+  #     - "8501:80"
+  #   networks:
+  #     - pouw-network
+  #   restart: unless-stopped
+
+  # ============== 区块浏览器 ==============
+  explorer:
+    build: .
+    container_name: pouw-explorer
+    hostname: explorer
+    depends_on:
+      - bootstrap
+    command:
+      - "--port=9333"
+      - "--data-dir=/data"
+      - "--bootstrap=bootstrap:9333"
+      - "--rpc-port=8545"
+    ports:
+      - "127.0.0.1:9337:9333"    # P2P
+      - "127.0.0.1:8549:8545"    # RPC
+      - "127.0.0.1:8502:8501"    # UI
+    volumes:
+      - explorer-data:/data
+    networks:
+      - pouw-network
+    restart: unless-stopped
+    environment:
+      - POUW_NODE_NAME=Explorer
+      - MAINCOIN_PRODUCTION=true
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+
+# ============== 网络 ==============
+networks:
+  pouw-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+
+# ============== 数据卷 ==============
+volumes:
+  bootstrap-data:
+  bootstrap-wallets:
+  node1-data:
+  node1-wallets:
+  node2-data:
+  node2-wallets:
+  miner-data:
+  miner-wallets:
+  explorer-data:

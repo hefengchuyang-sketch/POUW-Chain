@@ -1,0 +1,163 @@
+# POUW Multi-Sector Chain - 节点配置文件
+
+# 网络配置
+network:
+  # 网络类型: mainnet, testnet, devnet
+  type: mainnet
+  
+  # 网络 ID（不同网络应使用不同 ID）
+  chain_id: 9333
+  
+  # P2P 配置
+  p2p:
+    # 监听地址
+    host: "0.0.0.0"
+    port: 9333
+    
+    # 最大连接数
+    max_peers: 50
+    
+    # Bootstrap 节点（首次启动时连接）
+    # 主网部署时必须配置至少 2 个引导节点
+    bootstrap_nodes:
+      - "bootstrap1.pouwchain.io:9333"
+      - "bootstrap2.pouwchain.io:9333"
+  
+  # RPC 配置
+  rpc:
+    enabled: true
+    host: "127.0.0.1"
+    port: 8545
+    # 允许的方法（留空表示全部）
+    allowed_methods: []
+    # CORS 配置
+    cors_origins: ["http://localhost:8545", "http://127.0.0.1:8545", "http://localhost:3000", "http://localhost:3001"]
+    # 速率限制（每 IP 每分钟最大请求数）
+    rate_limit: 200
+
+# 节点配置
+node:
+  # 节点 ID（留空自动生成）
+  id: ""
+  
+  # 节点名称（显示用）
+  name: "POUW-Node-1"
+  
+  # 所属板块（根据硬件自动检测）
+  sector: "auto"
+  
+  # 角色: full（完整节点）, light（轻节点，仅钱包）, miner（矿工）, provider（算力提供者）
+  role: full
+
+# 挖矿配置
+mining:
+  # 是否启用挖矿（仅 role=miner 或 role=provider 时有效）
+  enabled: false
+  
+  # 矿工地址（留空则使用默认钱包）
+  miner_address: ""
+  
+  # 挖矿线程数（0 = 自动）
+  threads: 0
+  
+  # POUW 任务配置
+  pouw:
+    # 接受的任务类型
+    accept_types:
+      - "AI_INFERENCE"
+      - "VIDEO_RENDER"
+      - "SCIENTIFIC"
+    
+    # 最大并发任务
+    max_concurrent: 4
+    
+    # 任务超时（秒）
+    timeout: 300
+
+# 存储配置
+storage:
+  # 数据目录
+  data_dir: "./data"
+  
+  # 存储后端: sqlite, leveldb
+  backend: leveldb
+  
+  # 区块缓存大小
+  block_cache_mb: 512
+  
+  # 是否启用压缩
+  compression: true
+
+# 钱包配置
+wallet:
+  # 钱包文件目录
+  wallet_dir: "./wallets"
+  
+  # 是否自动创建默认钱包（上线环境应关闭，由用户通过前端创建）
+  auto_create: false
+  
+  # 默认钱包助记词位数: 12, 15, 18, 21, 24
+  mnemonic_words: 24
+
+# 日志配置
+logging:
+  # 日志级别: DEBUG, INFO, WARNING, ERROR
+  level: INFO
+  
+  # 日志文件
+  file: "./logs/node.log"
+  
+  # 日志轮转
+  max_size_mb: 100
+  max_files: 10
+  
+  # 是否输出到控制台
+  console: true
+
+# 共识参数（通常不需要修改）
+consensus:
+  # 目标出块时间（秒）
+  target_block_time: 30
+  
+  # 难度调整间隔（区块数）
+  difficulty_adjustment_interval: 10
+  
+  # 初始难度
+  initial_difficulty: 4
+  
+  # 区块奖励（兼容配置项，实际使用 ChainParams 中板块特定的基础奖励）
+  base_reward: 50.0
+  
+  # 财库税率（区块奖励中进入财库的比例，剩余归矿工）
+  treasury_rate: 0.03
+  
+  # 减半周期（每 10000 块减半，约 3.5 天；奖励递减至零）
+  halving_interval: 10000
+  
+  # 最大区块大小（字节）
+  max_block_size: 1048576
+  
+  # 见证配置（测试网可设为 1，主网必须为 2）
+  required_witnesses: 2
+
+# API 密钥（可选）
+api:
+  # 管理 API 密钥（留空则启动时自动生成，也可通过 POUW_ADMIN_KEY 环境变量覆盖）
+  admin_key: ""
+  
+  # 是否启用 WebSocket
+  websocket: true
+  
+  # WebSocket 端口
+  ws_port: 8546
+
+# 开发模式
+dev:
+  # 是否为开发模式
+  enabled: false
+  
+  # 是否启用调试 RPC
+  debug_rpc: false
+  
+  # 模拟延迟（毫秒）
+  simulated_latency: 0
