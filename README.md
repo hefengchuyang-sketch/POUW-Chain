@@ -388,8 +388,8 @@ Copyright (c) 2026 POUW Chain
 
 ## Contact
 
-- GitHub Issues: [Submit an issue](https://github.com/pouwchain/maincoin/issues)
-- Email: dev@pouwchain.io
+- GitHub Issues: [Submit an issue](https://github.com/hefengchuyang-sketch/maincoin?tab=readme-ov-file)
+- Email: yuhanliu050128@gmail.com
 
 ---
 
