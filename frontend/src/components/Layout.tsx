@@ -24,7 +24,8 @@ import {
   Shield,
   Hammer,
   Database,
-  PlayCircle
+  PlayCircle,
+  Rocket
 } from 'lucide-react'
 import { useState, useEffect } from 'react'
 import { useAccountStore, useUIStore, useNotificationStore } from '../store'
@@ -40,6 +41,7 @@ const navItemDefs = [
   { path: '/mining', icon: Hammer, labelKey: 'nav.mining', descKey: 'nav.miningDesc' },
   { path: '/provider', icon: Server, labelKey: 'nav.provider', descKey: 'nav.providerDesc' },
   { path: '/demo', icon: PlayCircle, labelKey: 'nav.demo', descKey: 'nav.demoDesc' },
+  { path: '/showcase', icon: Rocket, labelKey: 'nav.showcase', descKey: 'nav.showcaseDesc' },
   { path: '/wallet', icon: Wallet, labelKey: 'nav.wallet', descKey: 'nav.walletDesc' },
   { path: '/explorer', icon: Database, labelKey: 'nav.explorer', descKey: 'nav.explorerDesc' },
   { path: '/orders', icon: Receipt, labelKey: 'nav.orders', descKey: 'nav.ordersDesc' },

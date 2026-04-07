@@ -72,6 +72,8 @@ const enUS: TranslationKeys = {
     providerDesc: 'Offer GPU computing',
     demo: 'Visual Demo',
     demoDesc: 'Manual dual-account order/miner workbench',
+    showcase: 'Project Story',
+    showcaseDesc: 'Sci-fi narrative and roadmap',
     wallet: 'Wallet',
     walletDesc: 'Assets & transactions',
     explorer: 'Block Explorer',

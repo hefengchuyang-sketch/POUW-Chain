@@ -70,6 +70,8 @@ const zhCN = {
     providerDesc: '提供GPU算力',
     demo: '可视化演示',
     demoDesc: '手动双账户下单与接单工作台',
+    showcase: '项目介绍',
+    showcaseDesc: '科幻风项目叙事与路线图',
     wallet: '钱包',
     walletDesc: '资产与交易',
     explorer: '区块浏览器',
