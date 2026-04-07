@@ -2347,6 +2347,21 @@ class NodeRPCService:
         # S-Box 挖矿状态
         if self.consensus_engine:
             result["sboxMiningEnabled"] = getattr(self.consensus_engine, '_sbox_mining_enabled', False)
+            result["consensusMode"] = getattr(self.consensus_engine, 'consensus_mode', 'mixed')
+            result["consensusSboxRatio"] = getattr(self.consensus_engine, 'consensus_sbox_ratio', 0.5)
+
+            # 混用共识观测统计（若共识引擎可提供）
+            try:
+                chain_info = self.consensus_engine.get_chain_info()
+                selected_dist = chain_info.get("consensus_selected_distribution")
+                mined_dist = chain_info.get("consensus_mined_distribution")
+                if selected_dist is not None:
+                    result["consensusSelectedDistribution"] = selected_dist
+                if mined_dist is not None:
+                    result["consensusMinedDistribution"] = mined_dist
+            except Exception:
+                pass
+
             try:
                 from core.sbox_engine import get_sbox_library
                 sbox_lib = get_sbox_library()

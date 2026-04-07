@@ -332,6 +332,13 @@ Default port: `8545`
 | `chain_getInfo` | Chain status |
 | `rpc_listMethods` | List all RPC methods |
 
+`chain_getInfo` now includes mixed-consensus observability fields:
+
+- `consensusMode`: `mixed` / `sbox_only` / `pouw_only`
+- `consensusSboxRatio`: configured SBOX_POUW target ratio
+- `consensusSelectedDistribution`: rolling window stats for selected consensus type
+- `consensusMinedDistribution`: rolling window stats for successfully mined consensus type
+
 ### Examples
 
 ```bash
