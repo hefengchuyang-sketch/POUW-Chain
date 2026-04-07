@@ -78,6 +78,7 @@ export default function Mining() {
   const [actionLoading, setActionLoading] = useState(false)
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
+  const [forceStoppedUntil, setForceStoppedUntil] = useState(0)
   const [p2pIp, setP2pIp] = useState('')
   const [p2pPort, setP2pPort] = useState('')
 
@@ -85,15 +86,21 @@ export default function Mining() {
     setLoading(true)
     try {
       const [statusData, rewardsData, scoreData] = await Promise.all([
-        miningApi.getStatus(),
+        miningApi.getStatus(account?.address),
         miningApi.getRewards(),
-        miningApi.getScore(),
+        miningApi.getScore(account?.address),
       ])
-      setStatus(statusData)
+
+      // 停止后短窗口内优先展示“已停止”，规避状态同步延迟
+      const effectiveStatus = Date.now() < forceStoppedUntil
+        ? { ...statusData, isMining: false, acceptingTasks: false, p2pEnabled: false, p2pPort: 0 }
+        : statusData
+
+      setStatus(effectiveStatus)
       setRewards(rewardsData.rewards)
       setScore(scoreData)
-      if (statusData.miningMode) {
-        setSelectedMode(statusData.miningMode)
+      if (effectiveStatus.miningMode) {
+        setSelectedMode(effectiveStatus.miningMode)
       }
       setError('')
     } catch {
@@ -107,7 +114,7 @@ export default function Mining() {
     fetchData()
     const interval = setInterval(fetchData, 10000)
     return () => clearInterval(interval)
-  }, [])
+  }, [account?.address])
 
   const handleStart = async () => {
     if (!isConnected || !account?.address) {
@@ -145,7 +152,14 @@ export default function Mining() {
       const result = await miningApi.stop()
       if (result.success) {
         setMessage(t('mining.stopped'))
+        setForceStoppedUntil(Date.now() + 4000)
+        setStatus((prev) => prev ? { ...prev, isMining: false, acceptingTasks: false, p2pEnabled: false, p2pPort: 0 } : prev)
         await fetchData()
+
+        // 二次确认，防止后端异步状态晚到
+        setTimeout(() => {
+          fetchData()
+        }, 1200)
       } else {
         setError(result.message || t('mining.stopFailed'))
       }
@@ -374,12 +388,12 @@ export default function Mining() {
             
             <div className={`text-lg font-semibold mb-1 ${(status?.isMining || status?.acceptingTasks) ? 'text-green-400' : 'text-console-text-muted'}`}>
               {status?.isMining && status?.acceptingTasks
-                ? `${t('mining.miningStatus')}+${t('mining.acceptingTasks')} Mining & Tasks`
+                ? `${t('mining.miningStatus')} + ${t('mining.acceptingTasks')}`
                 : status?.isMining
-                ? `${t('mining.miningStatus')} Mining`
+                ? `${t('mining.miningStatus')}`
                 : status?.acceptingTasks
-                ? `${t('mining.acceptingTasks')} Accepting Tasks`
-                : `${t('mining.stopped')} Stopped`}
+                ? `${t('mining.acceptingTasks')}`
+                : `${t('mining.stopped')}`}
             </div>
 
             <div className="text-xs text-console-text-muted mb-1">

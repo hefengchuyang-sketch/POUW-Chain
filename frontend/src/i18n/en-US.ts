@@ -70,6 +70,8 @@ const enUS: TranslationKeys = {
     miningDesc: 'Mining control & earnings',
     provider: 'Provide Computing',
     providerDesc: 'Offer GPU computing',
+    demo: 'Visual Demo',
+    demoDesc: 'Manual dual-account order/miner workbench',
     wallet: 'Wallet',
     walletDesc: 'Assets & transactions',
     explorer: 'Block Explorer',

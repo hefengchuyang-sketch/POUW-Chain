@@ -1,9 +1,11 @@
 import json
+import os
+import ssl
 import sys
 import time
 import urllib.request
 
-RPC_URL = "http://127.0.0.1:18545"
+RPC_URL = os.environ.get("DEMO_RPC_URL", "http://127.0.0.1:18545")
 
 
 def rpc(method, params=None, timeout=20):
@@ -18,7 +20,14 @@ def rpc(method, params=None, timeout=20):
         data=payload,
         headers={"Content-Type": "application/json"},
     )
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
+    if RPC_URL.lower().startswith("https://"):
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+    else:
+        ctx = None
+
+    with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:
         body = json.loads(resp.read().decode("utf-8"))
     if "error" in body and body["error"]:
         raise RuntimeError(f"RPC {method} failed: {body['error']}")
@@ -32,7 +41,7 @@ def wait_node_ready(retry=30):
             return
         except Exception:
             time.sleep(2)
-    raise RuntimeError("Node RPC is not ready on 18545")
+    raise RuntimeError(f"Node RPC is not ready on {RPC_URL}")
 
 
 def main():

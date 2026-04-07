@@ -4253,17 +4253,30 @@ class NodeRPCService:
     
     def _mining_stop(self, **kwargs) -> Dict:
         """停止挖矿"""
-        if not self.consensus_engine:
-            return {
-                "success": False,
-                "message": "共识引擎未初始化"
-            }
-        
         try:
-            self.consensus_engine.stop()
+            # 停止共识挖矿线程（若存在）
+            if self.consensus_engine and hasattr(self.consensus_engine, 'stop'):
+                self.consensus_engine.stop()
+                if hasattr(self.consensus_engine, 'is_mining'):
+                    self.consensus_engine.is_mining = False
+
+            # 停止接单状态，避免前端仍显示“接单中”
+            self.accepting_tasks = False
+            self.mining_mode = 'mine_only'
+
+            # 停止 P2P 数据服务（若已启动）
+            if self._p2p_data_server is not None:
+                try:
+                    self._p2p_data_server.stop()
+                except Exception:
+                    pass
+                self._p2p_data_server = None
+
             return {
                 "success": True,
-                "message": "挖矿已停止"
+                "message": "挖矿已停止",
+                "acceptingTasks": False,
+                "miningMode": self.mining_mode,
             }
         except Exception as e:
             return {
@@ -4755,6 +4768,21 @@ class NodeRPCService:
 
         self._demo_main_balances[buyer] -= total_price
         order_id = f"order_{uuid.uuid4().hex[:8]}"
+        image = kwargs.get("image") or kwargs.get("docker_image") or ""
+        input_data_ref = kwargs.get("inputDataRef") or kwargs.get("input_data_ref") or ""
+        input_filename = kwargs.get("inputFilename") or kwargs.get("input_filename") or ""
+
+        if input_data_ref and hasattr(self, "_file_manager") and self._file_manager:
+            file_info = self._file_manager.get_file_info(input_data_ref)
+            if not file_info:
+                return {
+                    "status": "failed",
+                    "error": "invalid_input_data_ref",
+                    "message": f"上传文件引用不存在: {input_data_ref}",
+                }
+
+        from .fee_config import ComputeMarketFeeRates as _CMF
+
         order = {
             "orderId": order_id,
             "minerId": "",
@@ -4764,6 +4792,15 @@ class NodeRPCService:
             "pricePerHour": unit_price,
             "durationHours": duration_hours,
             "totalPrice": total_price,
+            "buyerDebitTotal": total_price,
+            "feeRates": {
+                "platform": _CMF.PLATFORM,
+                "miner": _CMF.MINER,
+                "treasury": _CMF.TREASURY,
+            },
+            "platformFee": round(total_price * _CMF.PLATFORM, 8),
+            "treasuryFee": round(total_price * _CMF.TREASURY, 8),
+            "minerPayout": round(total_price * _CMF.MINER, 8),
             "coin": f"{gpu_type or 'RTX3080'}_COIN",
             "available": True,
             "status": "open",
@@ -4771,6 +4808,9 @@ class NodeRPCService:
             "acceptedBy": "",
             "taskId": "",
             "program": program,
+            "image": image,
+            "inputDataRef": input_data_ref,
+            "inputFilename": input_filename,
             "result": "",
             "createdAt": int(time.time() * 1000),
             "buyerBalanceAfter": round(self._demo_main_balances[buyer], 8),
@@ -4786,6 +4826,11 @@ class NodeRPCService:
             "buyerAddress": buyer,
             "buyerBalanceAfter": order["buyerBalanceAfter"],
             "totalPrice": total_price,
+            "buyerDebitTotal": total_price,
+            "platformFee": order["platformFee"],
+            "treasuryFee": order["treasuryFee"],
+            "minerPayout": order["minerPayout"],
+            "feeRates": order["feeRates"],
             "freeOrder": unit_price == 0.0,
         }
     
@@ -4831,13 +4876,55 @@ class NodeRPCService:
         linked_task_id = task_id or order.get("taskId") or f"task_{order_id}"
         order["taskId"] = linked_task_id
 
+        program_code = order.get("program", "") or "print('Hello from MainCoin compute order')"
+        docker_image = order.get("image", "") or "python:3.11-slim"
+        input_ref = order.get("inputDataRef", "")
+        input_name = order.get("inputFilename", "") or "input.data"
+        generated_dockerfile = (
+            f"FROM {docker_image}\n"
+            "WORKDIR /workspace\n"
+            "COPY main.py /workspace/main.py\n"
+            "COPY requirements.txt /workspace/requirements.txt\n"
+            "RUN pip install --no-cache-dir -r /workspace/requirements.txt\n"
+            "CMD [\"python\", \"/workspace/main.py\"]\n"
+        )
+        generated_requirements = "\n".join([
+            "requests>=2.31.0",
+            "numpy>=1.26.0",
+        ])
+        generated_main = "\n".join([
+            "import json",
+            "import time",
+            "",
+            "print('MainCoin Docker task started')",
+            f"print('task_id={linked_task_id}')",
+            f"print('order_id={order_id}')",
+            "time.sleep(0.1)",
+            "result = {'status': 'ok', 'message': 'docker task executed', 'score': 100}",
+            "print('RESULT=' + json.dumps(result, ensure_ascii=False))",
+            "",
+            "# User provided program snippet",
+            program_code,
+        ])
+
+        task_files = [
+            {"name": "main.py", "type": "file", "content": generated_main},
+            {"name": "requirements.txt", "type": "file", "content": generated_requirements},
+        ]
+        if docker_image:
+            task_files.append({"name": "Dockerfile", "type": "file", "content": generated_dockerfile})
+
         if linked_task_id in self.tasks:
             task = self.tasks[linked_task_id]
             task["status"] = "running"
             task["minerId"] = miner_identity
             task["orderId"] = order_id
             task["program"] = order.get("program", task.get("description", ""))
+            task["image"] = order.get("image", "")
+            task["inputDataRef"] = order.get("inputDataRef", "")
+            task["inputFilename"] = order.get("inputFilename", "")
             task["progress"] = max(task.get("progress", 0), 10)
+            task["files"] = task_files
         else:
             self.tasks[linked_task_id] = {
                 "taskId": linked_task_id,
@@ -4853,7 +4940,11 @@ class NodeRPCService:
                 "estimatedHours": order.get("durationHours", 1),
                 "progress": 10,
                 "program": order.get("program", ""),
+                "image": order.get("image", ""),
+                "inputDataRef": order.get("inputDataRef", ""),
+                "inputFilename": order.get("inputFilename", ""),
                 "runningTime": "0:00:01",
+                "files": task_files,
                 "createdAt": datetime.datetime.now().isoformat() + "Z",
                 "buyerId": order.get("buyerAddress", ""),
                 "minerId": miner_identity,
@@ -4862,7 +4953,17 @@ class NodeRPCService:
 
         if not hasattr(self, "_demo_main_balances"):
             self._demo_main_balances = {}
-        self._demo_main_balances[miner_identity] = self._demo_main_balances.get(miner_identity, 0.0) + float(order.get("totalPrice", 0.0))
+        if not hasattr(self, "_demo_fee_pool"):
+            self._demo_fee_pool = {"platform": 0.0, "treasury": 0.0}
+
+        gross = float(order.get("totalPrice", 0.0))
+        miner_payout = float(order.get("minerPayout", gross))
+        platform_fee = float(order.get("platformFee", 0.0))
+        treasury_fee = float(order.get("treasuryFee", 0.0))
+
+        self._demo_main_balances[miner_identity] = self._demo_main_balances.get(miner_identity, 0.0) + miner_payout
+        self._demo_fee_pool["platform"] += platform_fee
+        self._demo_fee_pool["treasury"] += treasury_fee
         order["minerBalanceAfter"] = round(self._demo_main_balances[miner_identity], 8)
         
         return {
@@ -4870,6 +4971,11 @@ class NodeRPCService:
             "orderId": order_id,
             "taskId": linked_task_id,
             "acceptedBy": miner_identity,
+            "totalPrice": gross,
+            "minerPayout": round(miner_payout, 8),
+            "platformFee": round(platform_fee, 8),
+            "treasuryFee": round(treasury_fee, 8),
+            "minerBalanceAfter": order["minerBalanceAfter"],
             "message": "订单已接",
         }
 
@@ -4885,11 +4991,27 @@ class NodeRPCService:
             task = self.tasks[linked_task_id]
             task["status"] = "completed"
             task["progress"] = 100
-            task["finalResult"] = result_data or f"result_{order_id}"
+            final_result = result_data or f"docker_executed_ok::{linked_task_id}"
+            final_result_hash = hashlib.sha256(final_result.encode()).hexdigest()
+            task["finalResult"] = final_result
+            task["outputs"] = [
+                {
+                    "name": "result.json",
+                    "size": "1.2 KB",
+                    "hash": final_result_hash[:16],
+                    "content": json.dumps({
+                        "taskId": linked_task_id,
+                        "orderId": order_id,
+                        "status": "completed",
+                        "resultHash": final_result_hash,
+                        "resultLength": len(final_result),
+                    }, ensure_ascii=False, indent=2),
+                }
+            ]
             task["completedAt"] = datetime.datetime.now().isoformat() + "Z"
 
         order["status"] = "completed"
-        order["result"] = result_data or f"result_{order_id}"
+        order["result"] = result_data or f"docker_executed_ok::{linked_task_id}"
         order["finishedAt"] = int(time.time() * 1000)
 
         return {
@@ -5736,7 +5858,8 @@ class NodeRPCService:
         self,
         filename: str,
         totalSize: int,
-        checksumSha256: str,
+        checksumSha256: str = None,
+        sha256Hash: str = None,
         **kwargs
     ) -> Dict:
         """初始化分块上传。
@@ -5746,10 +5869,13 @@ class NodeRPCService:
         """
         self._check_file_rate("init_upload")
         owner = self.miner_address or "anonymous"
+        checksum = checksumSha256 or sha256Hash
+        if not checksum:
+            raise RPCError(RPCErrorCode.INVALID_PARAMS.value, "缺少 checksumSha256/sha256Hash")
         return self._file_manager.init_upload(
             filename=filename,
             total_size=totalSize,
-            checksum_sha256=checksumSha256,
+            checksum_sha256=checksum,
             owner=owner,
         )
     
@@ -5757,15 +5883,19 @@ class NodeRPCService:
         self,
         uploadId: str,
         chunkIndex: int,
-        data: str,
+        data: str = None,
+        chunkData: str = None,
         **kwargs
     ) -> Dict:
         """上传单个分块（data 为 Base64 编码）。"""
         self._check_file_rate("upload_chunk")
+        payload = data or chunkData
+        if not payload:
+            raise RPCError(RPCErrorCode.INVALID_PARAMS.value, "缺少 data/chunkData")
         return self._file_manager.upload_chunk(
             upload_id=uploadId,
             chunk_index=chunkIndex,
-            chunk_data_b64=data,
+            chunk_data_b64=payload,
         )
     
     def _file_finalize_upload(self, uploadId: str, **kwargs) -> Dict:
@@ -6688,41 +6818,33 @@ class NodeRPCService:
     
     # ============== Dashboard 方法实现 ==============
     
-    def _dashboard_get_stats(self, **kwargs) -> Dict:
+    def _dashboard_get_stats(self, address: str = None, **kwargs) -> Dict:
         """获取仪表盘统计信- 读取真实数据"""
+        target_address = address or self.miner_address
+
         # 1. 获取UTXO余额（挖矿奖励来源）
         utxo_balance = 0.0
         pending_balance = 0.0
-        if hasattr(self, 'utxo_store') and self.utxo_store and self.miner_address:
+        if hasattr(self, 'utxo_store') and self.utxo_store and target_address:
             try:
-                utxo_balance = self.utxo_store.get_balance(self.miner_address)
+                utxo_balance = self.utxo_store.get_balance(target_address)
                 # 计算待成熟余额（coinbase未满100确认的部分）
-                total_utxo = self.utxo_store.get_total_balance(self.miner_address)
+                total_utxo = self.utxo_store.get_total_balance(target_address)
                 pending_balance = total_utxo - utxo_balance
             except Exception:
                 pass
 
-        # 2. 获取MAIN 余额（从 exchange.db，兑换得到的主币）
+        # 2. 余额口径与钱包保持一致（复用 account_get_balance）
         main_balance = 0.0
-        try:
-            from .dual_witness_exchange import get_exchange_service
-            exchange = get_exchange_service()
-            if self.miner_address:
-                main_balance = exchange.get_main_balance(self.miner_address)
-        except Exception:
-            pass
-        
-        # 2. 获取板块币余
         sector_total = 0.0
         sector_balances = {}
-        
-        if self.sector_ledger and self.miner_address:
-            # 获取所有板块币余额
-            from .sector_coin import SectorCoinType
-            all_balances = self.sector_ledger.get_all_balances(self.miner_address)
-            for coin_type, bal in all_balances.items():
-                sector_balances[coin_type.sector] = bal.balance
-                sector_total += bal.balance
+        try:
+            bal = self._account_get_balance(address=target_address)
+            main_balance = float(bal.get("mainBalance", 0.0) or 0.0)
+            sector_total = float(bal.get("sectorTotal", 0.0) or 0.0)
+            sector_balances = bal.get("sectorBalances", {}) or {}
+        except Exception:
+            pass
         
         # 获取真实区块高度
         block_height = 0
@@ -6751,7 +6873,7 @@ class NodeRPCService:
             "networkUtilization": 0,
             "blockHeight": block_height,
             "totalBlocksMined": total_blocks_mined,
-            "minerAddress": self.miner_address or "",
+            "minerAddress": target_address or "",
         }
     
     def _dashboard_get_recent_tasks(self, limit: int = 5, **kwargs) -> List[Dict]:
@@ -7320,6 +7442,11 @@ class NodeRPCService:
         
         # 返回任务相关文件结构
         task = self.tasks[tid]
+
+        # 优先返回任务内置文件（如 compute_order 生成的 Docker 任务文件）
+        if task.get("files") and isinstance(task.get("files"), list):
+            return task.get("files")
+
         files = []
         
         # 根据任务类型返回不同的文件结
@@ -7380,6 +7507,10 @@ class NodeRPCService:
             return []
         
         task = self.tasks[tid]
+
+        if task.get("outputs") and isinstance(task.get("outputs"), list):
+            return task.get("outputs")
+
         outputs = []
         
         if task.get("status") == "completed":

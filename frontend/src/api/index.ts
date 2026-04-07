@@ -294,9 +294,9 @@ export interface MinerScore {
 }
 
 export const miningApi = {
-  getStatus: async (): Promise<MiningStatus> => {
+  getStatus: async (address?: string): Promise<MiningStatus> => {
     try {
-      return await rpcCall<MiningStatus>('mining_getStatus', {})
+      return await rpcCall<MiningStatus>('mining_getStatus', address ? { address } : {})
     } catch {
       return {
         isMining: false,
@@ -366,6 +366,71 @@ export const miningApi = {
       }
     }
   },
+}
+
+// ========== 可视化演示接口 ==========
+
+export interface DemoOrderResult {
+  orderId: string
+  status: string
+  buyerAddress?: string
+  buyerBalanceAfter?: number
+  totalPrice?: number
+  freeOrder?: boolean
+}
+
+export interface DemoSubmitOrderParams {
+  buyerAddress: string
+  gpuType?: string
+  gpuCount?: number
+  durationHours?: number
+  pricePerHour?: number
+  freeOrder?: boolean
+  program?: string
+  image?: string
+  inputDataRef?: string
+  inputFilename?: string
+}
+
+export const demoApi = {
+  createWallet: async (password: string) => walletApi.create(password),
+  startMinerTaskMode: async (address: string) =>
+    rpcCall<MiningStartResult>('mining_start', { address, mode: 'task_only' }),
+  acceptOrder: async (orderId: string, minerAddress: string) =>
+    rpcCall<{ 
+      status: string
+      taskId: string
+      minerBalanceAfter?: number
+      totalPrice?: number
+      minerPayout?: number
+      platformFee?: number
+      treasuryFee?: number
+    }>('compute_acceptOrder', {
+      order_id: orderId,
+      miner_address: minerAddress,
+    }),
+  getOrder: async (orderId: string) =>
+    rpcCall<Record<string, unknown>>('compute_getOrder', { order_id: orderId }),
+  getChainInfo: async () => rpcCall<Record<string, unknown>>('chain_getInfo', {}),
+  submitOrderManual: async (params: DemoSubmitOrderParams) =>
+    rpcCall<DemoOrderResult>('compute_submitOrder', {
+      gpu_type: params.gpuType || 'RTX4090',
+      gpu_count: params.gpuCount ?? 1,
+      duration_hours: params.durationHours ?? 1,
+      price_per_hour: params.freeOrder ? 0 : (params.pricePerHour ?? 1),
+      free_order: params.freeOrder ?? false,
+      buyer_address: params.buyerAddress,
+      program: params.program || "print('manual demo task')",
+      image: params.image,
+      inputDataRef: params.inputDataRef,
+      inputFilename: params.inputFilename,
+    }),
+  completeOrderManual: async (orderId: string, taskId: string, resultData: string) =>
+    rpcCall<{ status: string; result: string }>('compute_completeOrder', {
+      order_id: orderId,
+      task_id: taskId,
+      result_data: resultData,
+    }),
 }
 
 // ========== 板块币兑换接口 ==========
@@ -590,9 +655,9 @@ export interface RecentProposal {
 }
 
 export const dashboardApi = {
-  getStats: async (): Promise<DashboardStats> => {
+  getStats: async (address?: string): Promise<DashboardStats> => {
     try {
-      return await rpcCall<DashboardStats>('dashboard_getStats', {})
+      return await rpcCall<DashboardStats>('dashboard_getStats', address ? { address } : {})
     } catch {
       return {
         balance: 0,
@@ -711,6 +776,7 @@ export interface TaskOutputFile {
   size: string
   hash: string
   downloadUrl?: string
+  content?: string
 }
 
 // 任务运行状态
@@ -884,27 +950,22 @@ export const encryptedTaskApi = {
   },
   
   // 创建加密任务
-  create: async (input: EncryptedTaskCreateInput): Promise<EncryptedTaskResult | null> => {
-    try {
-      return await rpcCall<EncryptedTaskResult>('encryptedTask_create', {
-        title: input.title,
-        description: input.description,
-        codeData: input.codeData,
-        inputData: input.inputData || '',
-        inputDataRef: input.inputDataRef || '',
-        taskType: input.taskType,
-        estimatedHours: input.estimatedHours,
-        budgetPerHour: input.budgetPerHour,
-        receivers: input.receivers || [],
-        userPublicKey: input.userPublicKey || '',
-        requirements: input.requirements || '',
-        maxMemoryGb: input.maxMemoryGb || 8,
-        maxTimeoutHours: input.maxTimeoutHours || 0,
-      })
-    } catch (e) {
-      console.error('创建加密任务失败:', e)
-      return null
-    }
+  create: async (input: EncryptedTaskCreateInput): Promise<EncryptedTaskResult> => {
+    return await rpcCall<EncryptedTaskResult>('encryptedTask_create', {
+      title: input.title,
+      description: input.description,
+      codeData: input.codeData,
+      inputData: input.inputData || '',
+      inputDataRef: input.inputDataRef || '',
+      taskType: input.taskType,
+      estimatedHours: input.estimatedHours,
+      budgetPerHour: input.budgetPerHour,
+      receivers: input.receivers || [],
+      userPublicKey: input.userPublicKey || '',
+      requirements: input.requirements || '',
+      maxMemoryGb: input.maxMemoryGb || 8,
+      maxTimeoutHours: input.maxTimeoutHours || 0,
+    })
   },
   
   // 提交加密任务
@@ -990,7 +1051,7 @@ export interface FileUploadProgress {
   totalBytes: number
 }
 
-export interface TaskOutputFile {
+export interface DownloadableTaskOutputFile {
   name: string
   fileSize: number
   sha256: string
@@ -1093,9 +1154,9 @@ export const fileTransferApi = {
   /**
    * 获取任务输出文件列表
    */
-  getTaskOutputs: async (taskId: string): Promise<TaskOutputFile[]> => {
+  getTaskOutputs: async (taskId: string): Promise<DownloadableTaskOutputFile[]> => {
     try {
-      const result = await rpcCall<{ files: TaskOutputFile[] }>('file_getTaskOutputs', { taskId })
+      const result = await rpcCall<{ files: DownloadableTaskOutputFile[] }>('file_getTaskOutputs', { taskId })
       return result?.files || []
     } catch {
       return []

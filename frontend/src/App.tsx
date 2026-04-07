@@ -18,6 +18,7 @@ import ProposalDetail from './pages/ProposalDetail'
 import Mining from './pages/Mining'
 import Provider from './pages/Provider'
 import Explorer from './pages/Explorer'
+import DemoFlow from './pages/DemoFlow'
 
 function App() {
   return (
@@ -51,6 +52,9 @@ function App() {
         
         {/* 区块浏览器 */}
         <Route path="explorer" element={<Explorer />} />
+
+        {/* 可视化演示 */}
+        <Route path="demo" element={<DemoFlow />} />
         
         {/* 矿工 */}
         <Route path="miners" element={<Miners />} />

@@ -82,6 +82,13 @@ class RPCHTTPHandler(BaseHTTPRequestHandler):
             return
 
         file_path = os.path.join(self.static_dir, safe_path)
+
+        # SPA fallback: routes like /demo are frontend routes, not physical files.
+        # If the requested path has no extension and does not exist, serve index.html.
+        if not os.path.exists(file_path):
+            _, ext = os.path.splitext(safe_path)
+            if ext == '':
+                file_path = os.path.join(self.static_dir, 'index.html')
         
         # 安全加固：防止 Windows 路径遍历攻击
         # Security: prevent path traversal on Windows via realpath check

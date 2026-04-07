@@ -68,6 +68,8 @@ const zhCN = {
     miningDesc: '挖矿控制与收益',
     provider: '算力提供',
     providerDesc: '提供GPU算力',
+    demo: '可视化演示',
+    demoDesc: '手动双账户下单与接单工作台',
     wallet: '钱包',
     walletDesc: '资产与交易',
     explorer: '区块浏览器',

@@ -97,10 +97,10 @@ export default function Dashboard() {
     setError(null)
     try {
       const [statsData, tasksData, network, mining] = await Promise.all([
-        dashboardApi.getStats(),
+        dashboardApi.getStats(account?.address),
         dashboardApi.getRecentTasks(5),
         statsApi.getNetworkStats(),
-        miningApi.getStatus(),
+        miningApi.getStatus(account?.address),
       ])
       setStats(statsData)
       setRecentTasks(tasksData)
@@ -118,7 +118,7 @@ export default function Dashboard() {
     fetchData()
     const interval = setInterval(fetchData, 30000)
     return () => clearInterval(interval)
-  }, [])
+  }, [account?.address])
 
   // 算力利用率环图数据
   const utilizationData = [

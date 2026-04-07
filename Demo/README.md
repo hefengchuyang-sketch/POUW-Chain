@@ -10,9 +10,36 @@ This folder contains a reproducible end-to-end demo package for:
 
 ## Quick Start
 
-1. Run one click script:
+### Frontend visual demo (recommended)
 
 ```bat
+Demo\start-visual-demo.bat
+```
+
+This will:
+
+- start local node (no Docker required)
+- open browser at `https://127.0.0.1:18545/demo`
+- you click "Run Visual Demo" in the page
+
+1. Run one click script (default: local no-Docker mode):
+
+```bat
+Demo\start-demo.bat
+```
+
+If Docker Desktop is unavailable (for example, virtualization not enabled), this default mode works without Docker.
+
+You can also start local mode directly:
+
+```bat
+Demo\start-demo-local.bat
+```
+
+To force Docker mode (optional):
+
+```bat
+set DEMO_FORCE_DOCKER=1
 Demo\start-demo.bat
 ```
 
@@ -20,6 +47,12 @@ Demo\start-demo.bat
 
 ```bat
 Demo\stop-demo.bat
+```
+
+For local no-Docker mode:
+
+```bat
+Demo\stop-demo-local.bat
 ```
 
 ## What the demo verifies

@@ -23,7 +23,7 @@ import {
   MemoryStick,
   FolderOpen
 } from 'lucide-react'
-import { taskApi, stakingApi, Task, TaskFileNode, TaskLogEntry, TaskOutputFile, TaskRuntimeStatus } from '../api'
+import { taskApi, stakingApi, fileTransferApi, Task, TaskFileNode, TaskLogEntry, TaskOutputFile, TaskRuntimeStatus } from '../api'
 import { useTranslation } from '../i18n'
 
 export default function TaskDetail() {
@@ -68,6 +68,20 @@ export default function TaskDetail() {
     try {
       const files = await taskApi.getTaskFiles(taskId)
       setFileTree(files)
+
+      // 自动选择第一个文件，避免代码面板空白
+      const pickFirstFile = (nodes: TaskFileNode[]): TaskFileNode | null => {
+        for (const n of nodes) {
+          if (n.type === 'file') return n
+          if (n.type === 'folder' && n.children?.length) {
+            const child = pickFirstFile(n.children)
+            if (child) return child
+          }
+        }
+        return null
+      }
+      setSelectedFile(pickFirstFile(files))
+
       // 自动展开第一层文件夹
       const folders = files.filter(f => f.type === 'folder').map(f => f.name)
       setExpandedFolders(new Set(folders))
@@ -177,6 +191,47 @@ export default function TaskDetail() {
     navigator.clipboard.writeText(hash)
     setCopiedHash(hash)
     setTimeout(() => setCopiedHash(null), 2000)
+  }
+
+  const triggerBlobDownload = (blob: Blob, filename: string) => {
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename || 'output.bin'
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  }
+
+  const handleDownloadOutput = async (file: TaskOutputFile) => {
+    if (file.downloadUrl) {
+      const a = document.createElement('a')
+      a.href = file.downloadUrl
+      a.target = '_blank'
+      a.rel = 'noopener noreferrer'
+      a.download = file.name || 'output.bin'
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      return
+    }
+
+    if (typeof file.content === 'string' && file.content.length > 0) {
+      const blob = new Blob([file.content], { type: 'application/json;charset=utf-8' })
+      triggerBlobDownload(blob, file.name || 'output.json')
+      return
+    }
+
+    if (taskId && file.name) {
+      const blob = await fileTransferApi.downloadTaskOutput(taskId, file.name)
+      if (blob) {
+        triggerBlobDownload(blob, file.name)
+        return
+      }
+    }
+
+    alert('该输出文件暂不支持下载')
   }
 
   const renderFileTree = (nodes: TaskFileNode[], path = '') => {
@@ -476,7 +531,7 @@ export default function TaskDetail() {
                             </button>
                             <button 
                               className="btn-secondary py-1 px-3 flex items-center gap-1"
-                              onClick={() => file.downloadUrl && window.open(file.downloadUrl, '_blank')}
+                              onClick={() => handleDownloadOutput(file)}
                             >
                               <Download size={14} />
                               下载
