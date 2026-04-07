@@ -21,6 +21,7 @@ import hashlib
 import threading
 import uuid
 import json
+from collections import deque
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Callable, Tuple, Any
 from enum import Enum
@@ -545,6 +546,8 @@ class ConsensusEngine:
         self.consensus_mode = "mixed"  # mixed | sbox_only | pouw_only
         self.consensus_sbox_ratio = 0.5  # mixed 模式下 SBOX_POUW 占比
         self._consensus_round = 0
+        self._recent_consensus_selected = deque(maxlen=200)
+        self._recent_consensus_mined = deque(maxlen=200)
         
         # 线程安全锁 — 保护共享状态
         self._lock = threading.Lock()
@@ -999,17 +1002,27 @@ class ConsensusEngine:
 
         if mode == "pouw_only":
             if has_pouw:
-                return ConsensusType.POUW
+                selected = ConsensusType.POUW
+                self._record_selected_consensus(selected)
+                return selected
             self.log("⚠️ POUW 任务生成失败，回退 PoW")
-            return ConsensusType.POW
+            selected = ConsensusType.POW
+            self._record_selected_consensus(selected)
+            return selected
 
         if mode == "sbox_only":
             if sbox_available:
-                return ConsensusType.SBOX_POUW
+                selected = ConsensusType.SBOX_POUW
+                self._record_selected_consensus(selected)
+                return selected
             if has_pouw:
-                return ConsensusType.POUW
+                selected = ConsensusType.POUW
+                self._record_selected_consensus(selected)
+                return selected
             self.log("⚠️ S-Box/POUW 均不可用，回退 PoW")
-            return ConsensusType.POW
+            selected = ConsensusType.POW
+            self._record_selected_consensus(selected)
+            return selected
 
         # mixed 模式：按确定性比例混用
         if sbox_available and has_pouw:
@@ -1018,16 +1031,67 @@ class ConsensusEngine:
             roll = int(hashlib.sha256(seed).hexdigest()[:8], 16) / 0xFFFFFFFF
             self._consensus_round += 1
             if roll < self.consensus_sbox_ratio:
-                return ConsensusType.SBOX_POUW
-            return ConsensusType.POUW
+                selected = ConsensusType.SBOX_POUW
+                self._record_selected_consensus(selected)
+                return selected
+            selected = ConsensusType.POUW
+            self._record_selected_consensus(selected)
+            return selected
 
         if sbox_available:
-            return ConsensusType.SBOX_POUW
+            selected = ConsensusType.SBOX_POUW
+            self._record_selected_consensus(selected)
+            return selected
         if has_pouw:
-            return ConsensusType.POUW
+            selected = ConsensusType.POUW
+            self._record_selected_consensus(selected)
+            return selected
 
         self.log("⚠️ S-Box/POUW 均不可用，回退 PoW")
-        return ConsensusType.POW
+        selected = ConsensusType.POW
+        self._record_selected_consensus(selected)
+        return selected
+
+    def _record_selected_consensus(self, consensus: ConsensusType):
+        """记录最近选择的共识类型。"""
+        try:
+            self._recent_consensus_selected.append(consensus.value)
+        except Exception:
+            pass
+
+    def _record_mined_consensus(self, consensus: ConsensusType):
+        """记录最近成功出块的共识类型。"""
+        try:
+            self._recent_consensus_mined.append(consensus.value)
+        except Exception:
+            pass
+
+    def _build_consensus_distribution(self, values: List[str]) -> Dict[str, Any]:
+        """构建共识分布统计。"""
+        total = len(values)
+        if total == 0:
+            return {
+                "window": 0,
+                "counts": {"POUW": 0, "SBOX_POUW": 0, "POW": 0},
+                "sbox_ratio": 0.0,
+                "pouw_ratio": 0.0,
+                "pow_ratio": 0.0,
+            }
+
+        count_pouw = sum(1 for x in values if x == ConsensusType.POUW.value)
+        count_sbox = sum(1 for x in values if x == ConsensusType.SBOX_POUW.value)
+        count_pow = sum(1 for x in values if x == ConsensusType.POW.value)
+        return {
+            "window": total,
+            "counts": {
+                "POUW": count_pouw,
+                "SBOX_POUW": count_sbox,
+                "POW": count_pow,
+            },
+            "sbox_ratio": round(count_sbox / total, 4),
+            "pouw_ratio": round(count_pouw / total, 4),
+            "pow_ratio": round(count_pow / total, 4),
+        }
 
     def configure_consensus_mode(
         self,
@@ -1458,6 +1522,7 @@ class ConsensusEngine:
             self.difficulty_adjuster.record_block(mining_time)
             self.total_blocks_mined += 1
             self._last_block_time = time.time()
+            self._record_mined_consensus(block.consensus_type)
             
             # 评分系统记录
             try:
@@ -1972,6 +2037,12 @@ class ConsensusEngine:
             "total_pouw_proofs": self.total_pouw_proofs,
             "latest_block": self.get_latest_block().to_dict() if self.chain else None,
             "sbox_mining_enabled": self._sbox_mining_enabled,
+            "consensus_selected_distribution": self._build_consensus_distribution(
+                list(self._recent_consensus_selected)
+            ),
+            "consensus_mined_distribution": self._build_consensus_distribution(
+                list(self._recent_consensus_mined)
+            ),
         }
         # S-Box 挖矿信息
         if self._sbox_miner:

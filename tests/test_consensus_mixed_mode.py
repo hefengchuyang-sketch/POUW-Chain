@@ -79,3 +79,19 @@ def test_mixed_mode_ratio_produces_both_consensus_types():
 
     ratio = sbox_count / len(picks)
     assert 0.45 <= ratio <= 0.85, f"Unexpected mixed ratio drift: {ratio}"
+
+
+def test_chain_info_contains_consensus_distribution_stats():
+    engine = _make_engine()
+    engine.configure_consensus_mode(mode="mixed", sbox_ratio=0.5, sbox_enabled=True)
+
+    engine._record_selected_consensus(ConsensusType.SBOX_POUW)
+    engine._record_selected_consensus(ConsensusType.POUW)
+    engine._record_mined_consensus(ConsensusType.SBOX_POUW)
+
+    info = engine.get_chain_info()
+
+    assert "consensus_selected_distribution" in info
+    assert "consensus_mined_distribution" in info
+    assert info["consensus_selected_distribution"]["window"] >= 2
+    assert info["consensus_mined_distribution"]["window"] >= 1
