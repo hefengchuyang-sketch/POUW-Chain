@@ -25,61 +25,61 @@ function App() {
   return (
     <Routes>
       <Route path="/" element={<Layout />}>
-        {/* 控制台首页 */}
+        {/* Console home */}
         <Route index element={<Dashboard />} />
         
-        {/* 算力市场 */}
+        {/* Compute market */}
         <Route path="market" element={<Market />} />
         
-        {/* 任务系统 */}
+        {/* Task system */}
         <Route path="tasks" element={<Tasks />} />
         <Route path="tasks/:taskId" element={<TaskDetail />} />
         
-        {/* 钱包 */}
+        {/* Wallet */}
         <Route path="wallet" element={<Wallet />} />
         
-        {/* 订单中心 */}
+        {/* Order center */}
         <Route path="orders" element={<Orders />} />
         
-        {/* 用户中心 */}
+        {/* User center */}
         <Route path="account" element={<Account />} />
         
-        {/* 治理 */}
+        {/* Governance */}
         <Route path="governance" element={<Governance />} />
         <Route path="governance/:proposalId" element={<ProposalDetail />} />
         
-        {/* 统计 */}
+        {/* Statistics */}
         <Route path="statistics" element={<Statistics />} />
         
-        {/* 区块浏览器 */}
+        {/* Explorer */}
         <Route path="explorer" element={<Explorer />} />
 
-        {/* 可视化演示 */}
+        {/* Visual demo */}
         <Route path="demo" element={<DemoFlow />} />
 
-        {/* 项目介绍 */}
+        {/* Project showcase */}
         <Route path="showcase" element={<ProjectShowcase />} />
         
-        {/* 矿工 */}
+        {/* Miners */}
         <Route path="miners" element={<Miners />} />
         
-        {/* 挖矿 */}
+        {/* Mining */}
         <Route path="mining" element={<Mining />} />
         
-        {/* 算力提供者 */}
+        {/* Compute provider */}
         <Route path="provider" element={<Provider />} />
         
-        {/* 隐私 */}
+        {/* Privacy */}
         <Route path="privacy" element={<Privacy />} />
         
-        {/* 设置 */}
+        {/* Settings */}
         <Route path="settings" element={<Settings />} />
         
-        {/* 帮助 */}
+        {/* Help */}
         <Route path="help" element={<Help />} />
       </Route>
       
-      {/* 钱包连接页面（独立布局） */}
+      {/* Wallet connect page (standalone layout) */}
       <Route path="connect" element={<Connect />} />
     </Routes>
   )

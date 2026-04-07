@@ -1,120 +1,120 @@
-# POUW Multi-Sector Chain - 节点配置文件
+# POUW Multi-Sector Chain - Node configuration file
 
-# 网络配置
+# Network configuration
 network:
-  # 网络类型: mainnet, testnet, devnet
+  # Network type: mainnet, testnet, devnet
   type: mainnet
   
-  # 网络 ID（不同网络应使用不同 ID）
+  # Network ID (different networks should use different IDs)
   chain_id: 9333
   
-  # P2P 配置
+  # P2P configuration
   p2p:
-    # 监听地址
+    # Listen address
     host: "0.0.0.0"
     port: 9333
     
-    # 最大连接数
+    # Maximum peers
     max_peers: 50
     
-    # Bootstrap 节点（首次启动时连接）
-    # 主网部署时必须配置至少 2 个引导节点
+    # Bootstrap nodes (used on first startup)
+    # Mainnet deployment should configure at least 2 bootstrap nodes
     bootstrap_nodes:
       - "bootstrap1.pouwchain.io:9333"
       - "bootstrap2.pouwchain.io:9333"
   
-  # RPC 配置
+  # RPC configuration
   rpc:
     enabled: true
     host: "127.0.0.1"
     port: 8545
-    # 允许的方法（留空表示全部）
+    # Allowed methods (empty means all)
     allowed_methods: []
-    # CORS 配置
+    # CORS configuration
     cors_origins: ["http://localhost:8545", "http://127.0.0.1:8545", "http://localhost:3000", "http://localhost:3001"]
-    # 速率限制（每 IP 每分钟最大请求数）
+    # Rate limit (max requests per IP per minute)
     rate_limit: 200
 
-# 节点配置
+# Node configuration
 node:
-  # 节点 ID（留空自动生成）
+  # Node ID (auto-generated when empty)
   id: ""
   
-  # 节点名称（显示用）
+  # Node name (display only)
   name: "POUW-Node-1"
   
-  # 所属板块（根据硬件自动检测）
+  # Sector (auto-detected from hardware)
   sector: "auto"
   
-  # 角色: full（完整节点）, light（轻节点，仅钱包）, miner（矿工）, provider（算力提供者）
+  # Role: full (full node), light (wallet-only), miner, provider (compute provider)
   role: full
 
-# 挖矿配置
+# Mining configuration
 mining:
-  # 是否启用挖矿（仅 role=miner 或 role=provider 时有效）
+  # Enable mining (effective only when role=miner or role=provider)
   enabled: false
   
-  # 矿工地址（留空则使用默认钱包）
+  # Miner address (uses default wallet when empty)
   miner_address: ""
   
-  # 挖矿线程数（0 = 自动）
+  # Mining thread count (0 = auto)
   threads: 0
   
-  # POUW 任务配置
+  # POUW task configuration
   pouw:
-    # 接受的任务类型
+    # Accepted task types
     accept_types:
       - "AI_INFERENCE"
       - "VIDEO_RENDER"
       - "SCIENTIFIC"
     
-    # 最大并发任务
+    # Maximum concurrent tasks
     max_concurrent: 4
     
-    # 任务超时（秒）
+    # Task timeout (seconds)
     timeout: 300
 
-# 存储配置
+# Storage configuration
 storage:
-  # 数据目录
+  # Data directory
   data_dir: "./data"
   
-  # 存储后端: sqlite, leveldb
+  # Storage backend: sqlite, leveldb
   backend: leveldb
   
-  # 区块缓存大小
+  # Block cache size
   block_cache_mb: 512
   
-  # 是否启用压缩
+  # Enable compression
   compression: true
 
-# 钱包配置
+# Wallet configuration
 wallet:
-  # 钱包文件目录
+  # Wallet directory
   wallet_dir: "./wallets"
   
-  # 是否自动创建默认钱包（上线环境应关闭，由用户通过前端创建）
+  # Auto-create default wallet (should be disabled in production)
   auto_create: false
   
-  # 默认钱包助记词位数: 12, 15, 18, 21, 24
+  # Default mnemonic word count: 12, 15, 18, 21, 24
   mnemonic_words: 24
 
-# 日志配置
+# Logging configuration
 logging:
-  # 日志级别: DEBUG, INFO, WARNING, ERROR
+  # Log level: DEBUG, INFO, WARNING, ERROR
   level: INFO
   
-  # 日志文件
+  # Log file
   file: "./logs/node.log"
   
-  # 日志轮转
+  # Log rotation
   max_size_mb: 100
   max_files: 10
   
-  # 是否输出到控制台
+  # Output to console
   console: true
 
-# 共识参数（通常不需要修改）
+# Consensus parameters (usually no need to modify)
 consensus:
   # Consensus mode: mixed, sbox_only, pouw_only
   mode: mixed
@@ -125,48 +125,48 @@ consensus:
   # Globally enable/disable S-Box mining path
   sbox_enabled: true
 
-  # 目标出块时间（秒）
+  # Target block time (seconds)
   target_block_time: 30
   
-  # 难度调整间隔（区块数）
+  # Difficulty adjustment interval (blocks)
   difficulty_adjustment_interval: 10
   
-  # 初始难度
+  # Initial difficulty
   initial_difficulty: 4
   
-  # 区块奖励（兼容配置项，实际使用 ChainParams 中板块特定的基础奖励）
+  # Block reward (compat field; actual rewards come from sector-specific ChainParams values)
   base_reward: 50.0
   
-  # 财库税率（区块奖励中进入财库的比例，剩余归矿工）
+  # Treasury tax rate (part of block reward goes to treasury, remainder to miner)
   treasury_rate: 0.03
   
-  # 减半周期（每 10000 块减半，约 3.5 天；奖励递减至零）
+  # Halving interval (halves every 10000 blocks, about 3.5 days; reward decays to zero)
   halving_interval: 10000
   
-  # 最大区块大小（字节）
+  # Max block size (bytes)
   max_block_size: 1048576
   
-  # 见证配置（测试网可设为 1，主网必须为 2）
+  # Witness setting (testnet can be 1, mainnet must be 2)
   required_witnesses: 2
 
-# API 密钥（可选）
+# API key (optional)
 api:
-  # 管理 API 密钥（留空则启动时自动生成，也可通过 POUW_ADMIN_KEY 环境变量覆盖）
+  # Admin API key (auto-generated if empty, or override via POUW_ADMIN_KEY)
   admin_key: ""
   
-  # 是否启用 WebSocket
+  # Enable WebSocket
   websocket: true
   
-  # WebSocket 端口
+  # WebSocket port
   ws_port: 8546
 
-# 开发模式
+# Development mode
 dev:
-  # 是否为开发模式
+  # Development mode enabled
   enabled: false
   
-  # 是否启用调试 RPC
+  # Enable debug RPC
   debug_rpc: false
   
-  # 模拟延迟（毫秒）
+  # Simulated latency (ms)
   simulated_latency: 0

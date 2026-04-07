@@ -3,7 +3,7 @@
 @tailwind utilities;
 
 :root {
-  /* 深色云控制台主题 - 类似AWS/阿里云 */
+  /* Dark cloud-console theme - similar to AWS/Aliyun style */
   --console-bg: #0d1117;
   --console-surface: #161b22;
   --console-border: #30363d;
@@ -14,7 +14,7 @@
   --console-text: #c9d1d9;
   --console-text-muted: #8b949e;
   
-  /* 代码高亮色 */
+  /* Code highlight colors */
   --code-bg: #0d1117;
   --code-string: #a5d6ff;
   --code-keyword: #ff7b72;
@@ -32,7 +32,7 @@ body {
   color: var(--console-text);
 }
 
-/* 滚动条样式 */
+/* Scrollbar styles */
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
@@ -51,7 +51,7 @@ body {
   background: #484f58;
 }
 
-/* ===== 卡片样式 ===== */
+/* ===== Card styles ===== */
 .card {
   @apply bg-console-surface rounded-lg border border-console-border p-5;
 }
@@ -60,7 +60,7 @@ body {
   @apply transition-all duration-200 hover:border-console-accent/50 hover:shadow-lg hover:shadow-console-accent/5;
 }
 
-/* ===== 按钮样式 ===== */
+/* ===== Button styles ===== */
 .btn-primary {
   @apply bg-console-primary text-white font-medium py-2 px-4 rounded-md
          transition-all duration-150 hover:bg-green-700 active:scale-[0.98]
@@ -87,7 +87,7 @@ body {
          transition-all duration-150 hover:bg-console-border/30 hover:text-console-text;
 }
 
-/* ===== 输入框样式 ===== */
+/* ===== Input styles ===== */
 .input {
   @apply w-full bg-console-bg border border-console-border rounded-md px-3 py-2 text-console-text
          placeholder:text-console-text-muted focus:outline-none focus:border-console-accent focus:ring-1 focus:ring-console-accent;
@@ -97,7 +97,7 @@ body {
   @apply input py-1.5 text-sm;
 }
 
-/* ===== 状态标签 ===== */
+/* ===== Status badges ===== */
 .badge {
   @apply inline-flex items-center px-2 py-0.5 rounded text-xs font-medium;
 }
@@ -122,7 +122,7 @@ body {
   @apply bg-gray-500/15 text-gray-400 border border-gray-500/30;
 }
 
-/* 状态点 */
+/* Status dots */
 .status-dot {
   @apply w-2 h-2 rounded-full;
 }
@@ -143,7 +143,7 @@ body {
   @apply bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.5)];
 }
 
-/* ===== 进度条 ===== */
+/* ===== Progress bars ===== */
 .progress-bar {
   @apply h-1.5 bg-console-border rounded-full overflow-hidden;
 }
@@ -156,7 +156,7 @@ body {
   @apply h-full bg-console-accent rounded-full transition-all duration-300;
 }
 
-/* ===== 表格样式 ===== */
+/* ===== Table styles ===== */
 .table-container {
   @apply overflow-x-auto rounded-lg border border-console-border;
 }
@@ -181,7 +181,7 @@ td {
   @apply py-3 px-4;
 }
 
-/* ===== 代码区域 ===== */
+/* ===== Code blocks ===== */
 .code-block {
   @apply bg-code-bg rounded-lg border border-console-border p-4 font-mono text-sm overflow-x-auto;
 }
@@ -198,7 +198,7 @@ td {
   @apply w-3 h-3 rounded-full;
 }
 
-/* ===== 选项卡 ===== */
+/* ===== Tabs ===== */
 .tabs {
   @apply flex gap-1 border-b border-console-border;
 }
@@ -212,7 +212,7 @@ td {
   @apply text-console-text border-console-accent;
 }
 
-/* ===== 侧边栏 ===== */
+/* ===== Sidebar ===== */
 .sidebar {
   @apply bg-console-surface border-r border-console-border;
 }
@@ -226,7 +226,7 @@ td {
   @apply text-console-text bg-console-accent/15 border-l-2 border-console-accent mx-0 rounded-none;
 }
 
-/* ===== 面包屑 ===== */
+/* Translated comment */
 .breadcrumb {
   @apply flex items-center gap-2 text-sm text-console-text-muted;
 }
@@ -235,7 +235,7 @@ td {
   @apply hover:text-console-text transition-colors;
 }
 
-/* ===== 警告框 ===== */
+/* Translated comment */
 .alert {
   @apply p-4 rounded-lg border flex items-start gap-3;
 }
@@ -256,7 +256,7 @@ td {
   @apply bg-red-500/10 border-red-500/30 text-red-400;
 }
 
-/* ===== 文件树 ===== */
+/* Translated comment */
 .file-tree {
   @apply text-sm font-mono;
 }
@@ -269,12 +269,12 @@ td {
   @apply bg-console-accent/15 text-console-text;
 }
 
-/* ===== 工具提示 ===== */
+/* Translated comment */
 .tooltip {
   @apply absolute z-50 px-2 py-1 text-xs bg-console-surface border border-console-border rounded shadow-lg;
 }
 
-/* ===== 模态框 ===== */
+/* Translated comment */
 .modal-overlay {
   @apply fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center;
 }
@@ -295,7 +295,7 @@ td {
   @apply px-6 py-4 border-t border-console-border flex justify-end gap-3;
 }
 
-/* ===== 下拉菜单 ===== */
+/* Translated comment */
 .dropdown {
   @apply absolute z-50 bg-console-surface border border-console-border rounded-lg shadow-xl py-1 min-w-[160px];
 }
@@ -304,7 +304,7 @@ td {
   @apply px-4 py-2 text-sm text-console-text hover:bg-console-border/30 cursor-pointer flex items-center gap-2;
 }
 
-/* ===== 统计卡片 ===== */
+/* Translated comment */
 .stat-card {
   @apply card flex flex-col;
 }
@@ -325,7 +325,7 @@ td {
   @apply text-red-400 text-sm flex items-center gap-1;
 }
 
-/* ===== 加载状态 ===== */
+/* Translated comment */
 .skeleton {
   @apply animate-pulse bg-console-border rounded;
 }
@@ -334,7 +334,7 @@ td {
   @apply animate-spin rounded-full border-2 border-console-border border-t-console-accent;
 }
 
-/* ===== GPU 板块卡片 ===== */
+/* Translated comment */
 .sector-card {
   @apply card card-hover cursor-pointer relative overflow-hidden;
 }
@@ -344,7 +344,7 @@ td {
   @apply absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-console-accent to-console-primary;
 }
 
-/* ===== 订单簿样式 ===== */
+/* Translated comment */
 .orderbook-row {
   @apply flex items-center justify-between py-1.5 px-2 text-xs font-mono hover:bg-console-border/20;
 }
@@ -357,7 +357,7 @@ td {
   @apply text-red-400;
 }
 
-/* ===== 钱包余额卡片 ===== */
+/* Translated comment */
 .wallet-balance {
   @apply card relative overflow-hidden;
 }
@@ -367,7 +367,7 @@ td {
   @apply absolute inset-0 bg-gradient-to-br from-console-accent/10 to-transparent;
 }
 
-/* ===== VSCode 风格编辑器区域 ===== */
+/* Translated comment */
 .editor-container {
   @apply bg-console-bg rounded-lg border border-console-border overflow-hidden;
 }
@@ -397,7 +397,7 @@ td {
   @apply bg-black border-t border-console-border;
 }
 
-/* ===== 日志输出 ===== */
+/* Translated comment */
 .log-line {
   @apply font-mono text-sm py-0.5 px-4 hover:bg-console-surface/50;
 }
@@ -414,7 +414,7 @@ td {
   @apply text-console-text-muted mr-4;
 }
 
-/* ===== 响应式调整 ===== */
+/* Translated comment */
 @media (max-width: 768px) {
   .card {
     @apply p-4;
@@ -424,3 +424,4 @@ td {
     @apply text-xl;
   }
 }
+

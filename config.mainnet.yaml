@@ -1,38 +1,38 @@
-# POUW Multi-Sector Chain - 主网生产环境配置
-# 使用方法: 复制此文件为 config.yaml
+# POUW Multi-Sector Chain - Mainnet production configuration
+# Usage: copy this file to config.yaml
 
-# 网络配置
+# Network configuration
 network:
-  # 主网模式
+  # Mainnet mode
   type: mainnet
   
-  # 主网 ID
+  # Mainnet ID
   chain_id: 9333
   
-  # P2P 配置
+  # P2P configuration
   p2p:
-    # 监听地址（生产环境保持 0.0.0.0）
+    # Listen address (keep 0.0.0.0 in production)
     host: "0.0.0.0"
     port: 9333
     
-    # 最大连接数
+    # Maximum peers
     max_peers: 100
     
-    # Bootstrap 节点 - 部署时必须替换为你的实际节点地址
-    # 至少需要 2 个不同机房/区域的引导节点
+    # Bootstrap nodes - replace with your real node addresses at deployment
+    # At least 2 bootstrap nodes in different data centers/regions are recommended
     bootstrap_nodes:
       - "bootstrap1.pouwchain.io:9333"
       - "bootstrap2.pouwchain.io:9333"
-      # 添加更多节点以提高网络稳定性
+      # Add more nodes to improve network stability
       # - "bootstrap3.pouwchain.io:9333"
   
-  # RPC 配置
+  # RPC configuration
   rpc:
     enabled: true
-    # 生产环境必须绑定到内网或用 nginx 反向代理
+    # In production, bind to internal network or use nginx reverse proxy
     host: "127.0.0.1"
     port: 8545
-    # 允许的方法（生产环境必须明确指定，禁止留空）
+    # Allowed methods (must be explicitly listed in production)
     allowed_methods:
       - "chain_getStatus"
       - "chain_getBlock"
@@ -44,21 +44,21 @@ network:
       - "wallet_getAddresses"
       - "tx_send"
       - "tx_getStatus"
-    # CORS 配置 - 限制为你的前端域名
+    # CORS configuration - restrict to your frontend domain
     cors_origins:
       - "https://your-frontend-domain.com"
-      # 生产环境禁止加入 localhost
+      # Do not include localhost in production
 
-# 节点配置
+# Node configuration
 node:
   id: ""
   name: "POUW-MainNet-Node"
   sector: "auto"
-  role: full  # 生产环境建议 full 或 miner
+  role: full  # Production recommendation: full or miner
 
-# 挖矿配置
+# Mining configuration
 mining:
-  enabled: false  # 根据需要开启
+  enabled: false  # Enable as needed
   miner_address: ""
   threads: 0
   
@@ -67,31 +67,31 @@ mining:
       - "AI_INFERENCE"
       - "VIDEO_RENDER"
       - "SCIENTIFIC"
-    max_concurrent: 8  # 生产环境可增加
-    timeout: 600  # 生产环境增加超时
+    max_concurrent: 8  # Can be increased in production
+    timeout: 600  # Longer timeout for production
 
-# 存储配置
+# Storage configuration
 storage:
   data_dir: "./data"
-  backend: leveldb  # 生产环境推荐 leveldb
-  block_cache_mb: 512  # 生产环境增加缓存
+  backend: leveldb  # leveldb is recommended in production
+  block_cache_mb: 512  # Increase cache in production
   compression: true
 
-# 钱包配置
+# Wallet configuration
 wallet:
   wallet_dir: "./wallets"
-  auto_create: false  # 生产环境禁止自动创建钱包
-  mnemonic_words: 24  # 生产环境用 24 词
+  auto_create: false  # Disable auto wallet creation in production
+  mnemonic_words: 24  # Use 24 words in production
 
-# 日志配置
+# Logging configuration
 logging:
-  level: INFO  # 生产环境用 INFO 或 WARNING
+  level: INFO  # Production recommendation: INFO or WARNING
   file: "./logs/node.log"
   max_size_mb: 200
   max_files: 20
-  console: false  # 生产环境关闭控制台输出
+  console: false  # Disable console output in production
 
-# 共识参数
+# Consensus parameters
 consensus:
   # Consensus mode: mixed, sbox_only, pouw_only
   mode: mixed
@@ -109,17 +109,17 @@ consensus:
   halving_interval: 210000
   max_block_size: 1048576
 
-# API 密钥（生产环境必须通过环境变量 POUW_ADMIN_KEY 设置，禁止留空）
-# 示例: export POUW_ADMIN_KEY=$(openssl rand -hex 32)
+# API key (must be set via POUW_ADMIN_KEY in production, never leave empty)
+# Example: export POUW_ADMIN_KEY=$(openssl rand -hex 32)
 api:
-  admin_key: ""  # 警告: 留空将自动生成，但每次重启会变化！生产环境必须固定设置。
+  admin_key: ""  # Warning: auto-generated when empty, but changes on every restart. Must be fixed in production.
   websocket: true
   ws_port: 8546
-  # 生产环境安全配置
-  rate_limit: 100          # 每分钟每 IP 最大请求数
-  max_request_size: 1048576 # 最大请求体 1MB
+  # Production security settings
+  rate_limit: 100          # Max requests per IP per minute
+  max_request_size: 1048576 # Max request body size: 1MB
 
-# 开发模式
+# Development mode
 dev:
   enabled: false
   debug_rpc: false

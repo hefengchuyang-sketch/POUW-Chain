@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import type { Account } from '../api'
 
-// ========== 账户状态 ==========
+// ========== Account state ==========
 
 interface AccountState {
   account: Account | null
@@ -15,7 +15,7 @@ interface AccountState {
   setError: (error: string | null) => void
 }
 
-// 从 localStorage 恢复连接状态
+// Restore connection state from localStorage
 const savedAddress = localStorage.getItem('wallet_address')
 const initialConnected = !!savedAddress
 const initialAccount: Account | null = savedAddress
@@ -29,7 +29,7 @@ export const useAccountStore = create<AccountState>((set) => ({
   error: null,
   
   setAccount: (account) => {
-    // 持久化钱包地址供 RPC 认证使用
+    // Persist wallet address for RPC authentication
     if (account?.address) {
       localStorage.setItem('wallet_address', account.address)
     } else {
@@ -48,7 +48,7 @@ export const useAccountStore = create<AccountState>((set) => ({
   setError: (error) => set({ error }),
 }))
 
-// ========== 通知状态 ==========
+// ========== Notification state ==========
 
 interface Notification {
   id: string
@@ -77,7 +77,7 @@ export const useNotificationStore = create<NotificationState>((set) => ({
         { ...notification, id }
       ]
     }))
-    // 自动清除通知（5秒后）
+    // Auto-clear notification (after 5 seconds)
     setTimeout(() => {
       set((state) => ({
         notifications: state.notifications.filter(n => n.id !== id)
@@ -90,7 +90,7 @@ export const useNotificationStore = create<NotificationState>((set) => ({
   clearAll: () => set({ notifications: [] }),
 }))
 
-// ========== UI 状态 ==========
+// ========== UI state ==========
 
 interface UIState {
   sidebarOpen: boolean

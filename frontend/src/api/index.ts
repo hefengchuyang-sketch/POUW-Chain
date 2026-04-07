@@ -1,16 +1,16 @@
-// API 基础配置
-const RPC_URL = '/rpc'  // 通过 Vite 代理到后端 :8545
+// API base configuration
+const RPC_URL = '/rpc'  // Proxied to backend :8545 via Vite
 
-// JSON-RPC 2.0 请求 ID 计数器
+// JSON-RPC 2.0 request ID counter
 let rpcId = 1
 
-// JSON-RPC 2.0 请求函数
+// JSON-RPC 2.0 request function
 async function rpcCall<T>(method: string, params: Record<string, unknown> = {}): Promise<T> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
   }
   
-  // 已登录钱包时自动附带身份头（写操作需认证）
+  // Attach identity header when wallet is connected (write operations require auth)
   const walletAddress = localStorage.getItem('wallet_address')
   if (walletAddress) {
     headers['X-Auth-User'] = walletAddress
@@ -40,7 +40,7 @@ async function rpcCall<T>(method: string, params: Record<string, unknown> = {}):
   return result.result
 }
 
-// ========== 钱包接口 ==========
+// ========== Wallet APIs ==========
 
 export interface KeystoreFile {
   version: number
@@ -69,7 +69,7 @@ export interface WalletCreateResult {
   addresses?: Record<string, string>
   sectorAddresses?: Record<string, string>
   sectorBalances?: Record<string, number>
-  keystore?: KeystoreFile  // 加密密钥文件
+  keystore?: KeystoreFile  // Translated comment
   keystoreFilename?: string
   message: string
   error?: string
@@ -91,9 +91,9 @@ export interface WalletInfo {
   sectorAddresses?: Record<string, string>
   balance?: number
   mainBalance?: number
-  sectorTotal?: number  // 板块币总额
+  sectorTotal?: number  // Translated comment
   sectorBalances?: Record<string, number>
-  availableSectorBalances?: Record<string, number>  // 可转账余额（已成熟 UTXO）
+  availableSectorBalances?: Record<string, number>  // Translated comment
   message?: string
 }
 
@@ -106,8 +106,8 @@ export const walletApi = {
       return {
         success: false,
         message: errMsg.includes('fetch') || errMsg.includes('network') 
-          ? '无法连接到后端服务，请确保节点正在运行' 
-          : `钱包创建失败: ${errMsg}`,
+          ? 'Cannot connect to backend service. Please make sure the node is running.' 
+          : `Wallet creation failed: ${errMsg}`,
         error: errMsg
       }
     }
@@ -118,31 +118,31 @@ export const walletApi = {
     } catch (e) {
       return {
         success: false,
-        message: '钱包导入失败',
+        message: 'Wallet import failed',
         error: String(e)
       }
     }
   },
-  // 从密钥文件导入
+  // Translated comment
   importKeystore: async (keystore: KeystoreFile | string, password: string): Promise<WalletImportResult> => {
     try {
       return await rpcCall<WalletImportResult>('wallet_importKeystore', { keystore, password })
     } catch (e) {
       return {
         success: false,
-        message: '密钥文件导入失败',
+        message: 'Keystore import failed',
         error: String(e)
       }
     }
   },
-  // 导出密钥文件
+  // Translated comment
   exportKeystore: async (password: string): Promise<{ success: boolean; keystore?: KeystoreFile; filename?: string; message: string }> => {
     try {
       return await rpcCall('wallet_exportKeystore', { password })
     } catch (e) {
       return {
         success: false,
-        message: '导出失败: ' + String(e),
+        message: 'Export failed: ' + String(e),
       }
     }
   },
@@ -161,12 +161,12 @@ export const walletApi = {
     try {
       return await rpcCall<{ success: boolean; message: string }>('wallet_unlock', { password })
     } catch {
-      return { success: false, message: '解锁失败' }
+      return { success: false, message: 'Unlock failed' }
     }
   },
 }
 
-// ========== 转账接口 ==========
+// ========== Transfer APIs ==========
 
 export interface TransferResult {
   success: boolean
@@ -199,14 +199,14 @@ export const transferApi = {
     } catch (e) {
       return {
         success: false,
-        message: '转账失败',
+        message: 'Transfer failed',
         error: String(e)
       }
     }
   }
 }
 
-// ========== 挖矿接口 ==========
+// ========== Mining APIs ==========
 
 export interface MiningStatus {
   isMining: boolean
@@ -368,7 +368,7 @@ export const miningApi = {
   },
 }
 
-// ========== 可视化演示接口 ==========
+// ========== Visual demo APIs ==========
 
 export interface DemoOrderResult {
   orderId: string
@@ -433,7 +433,7 @@ export const demoApi = {
     }),
 }
 
-// ========== 板块币兑换接口 ==========
+// ========== Sector-coin exchange APIs ==========
 
 export interface ExchangeRate {
   rate: number
@@ -479,7 +479,7 @@ export interface ExchangeHistoryResult {
 }
 
 export const exchangeApi = {
-  // 获取兑换比例
+  // Translated comment
   getRates: async (): Promise<ExchangeRatesResult> => {
     try {
       return await rpcCall<ExchangeRatesResult>('sector_getExchangeRates', {})
@@ -492,20 +492,20 @@ export const exchangeApi = {
     }
   },
   
-  // 请求兑换（板块币 → MAIN）
+  // Translated comment
   requestExchange: async (sector: string, amount: number): Promise<ExchangeResult> => {
     try {
       return await rpcCall<ExchangeResult>('sector_requestExchange', { sector, amount })
     } catch (e) {
       return {
         success: false,
-        message: '兑换请求失败',
+        message: 'Exchange request failed',
         error: String(e)
       }
     }
   },
   
-  // 获取兑换历史
+  // Translated comment
   getHistory: async (limit: number = 20): Promise<ExchangeHistoryResult> => {
     try {
       return await rpcCall<ExchangeHistoryResult>('sector_getExchangeHistory', { limit })
@@ -519,7 +519,7 @@ export const exchangeApi = {
     }
   },
   
-  // 取消兑换
+  // Translated comment
   cancel: async (exchangeId: string): Promise<{ success: boolean; message: string }> => {
     try {
       return await rpcCall<{ success: boolean; message: string }>('sector_cancelExchange', { exchangeId })
@@ -532,13 +532,13 @@ export const exchangeApi = {
   }
 }
 
-// ========== 账户接口 ==========
+// ========== Account APIs ==========
 
 export interface Account {
   address: string
   balance: number
-  mainBalance: number  // 真正的 MAIN 币（通过兑换获得）
-  sectorTotal: number  // 板块币总额（通过挖矿获得）
+  mainBalance: number  // Translated comment
+  sectorTotal: number  // Translated comment
   sectorAddresses?: Record<string, string>
   sectorBalances: Record<string, number>
   privacyLevel: 'transparent' | 'pseudonymous' | 'private'
@@ -620,12 +620,12 @@ export const accountApi = {
   },
 }
 
-// ========== 仪表盘接口 ==========
+// ========== Dashboard APIs ==========
 
 export interface DashboardStats {
   balance: number
-  mainBalance: number  // 真正的 MAIN 币余额
-  sectorTotal: number  // 板块币总额
+  mainBalance: number  // Translated comment
+  sectorTotal: number  // Translated comment
   balanceChange: number
   sectorBalances?: Record<string, number>
   activeTasks: number
@@ -705,7 +705,7 @@ export const dashboardApi = {
   },
 }
 
-// ========== 任务接口 ==========
+// ========== Task APIs ==========
 
 export interface Task {
   taskId: string
@@ -715,11 +715,11 @@ export interface Task {
   status: 'pending' | 'assigned' | 'running' | 'completed' | 'disputed' | 'cancelled' | 'failed'
   priority: 'normal' | 'urgent'
   
-  // 价格
+  // Translated comment
   price: number
   coin: string
   
-  // 资源需求
+  // Translated comment
   gpuType: string
   gpuCount: number
   estimatedHours: number
@@ -733,29 +733,29 @@ export interface Task {
     accuracy?: number
   }
   
-  // 验收
+  // Translated comment
   protocolVerdict?: 'executed' | 'consistent' | 'cheated' | 'timeout' | 'invalid'
   serviceVerdict?: 'met' | 'partial' | 'violated' | 'pending'
   applicationVerdict?: 'accepted' | 'disputed' | 'rejected' | 'auto_accepted'
   
-  // 时间
+  // Translated comment
   createdAt: string
   startedAt?: string
   completedAt?: string
   
-  // 参与者
+  // Translated comment
   buyerId: string
   minerId?: string
   
-  // 进度
+  // Translated comment
   progress: number
   
-  // 运行时数据 (动态获取)
+  // Translated comment
   runningTime?: string
   gpuUtilization?: number
 }
 
-// 任务文件节点
+// Translated comment
 export interface TaskFileNode {
   name: string
   type: 'file' | 'folder'
@@ -763,14 +763,14 @@ export interface TaskFileNode {
   content?: string
 }
 
-// 任务日志条目
+// Translated comment
 export interface TaskLogEntry {
   timestamp: string
   type: 'stdout' | 'stderr' | 'system'
   message: string
 }
 
-// 任务输出文件
+// Translated comment
 export interface TaskOutputFile {
   name: string
   size: string
@@ -779,7 +779,7 @@ export interface TaskOutputFile {
   content?: string
 }
 
-// 任务运行状态
+// Translated comment
 export interface TaskRuntimeStatus {
   runningTime: string
   gpuUtilization: number
@@ -858,7 +858,7 @@ export const taskApi = {
     }
   },
     
-  // 获取任务文件列表
+  // Translated comment
   getTaskFiles: async (taskId: string): Promise<TaskFileNode[]> => {
     try {
       return await rpcCall<TaskFileNode[]>('task_getFiles', { task_id: taskId })
@@ -867,7 +867,7 @@ export const taskApi = {
     }
   },
   
-  // 获取任务日志
+  // Translated comment
   getTaskLogs: async (taskId: string, since?: string): Promise<TaskLogEntry[]> => {
     try {
       return await rpcCall<TaskLogEntry[]>('task_getLogs', { task_id: taskId, since })
@@ -876,7 +876,7 @@ export const taskApi = {
     }
   },
   
-  // 获取任务输出文件
+  // Translated comment
   getTaskOutputs: async (taskId: string): Promise<TaskOutputFile[]> => {
     try {
       return await rpcCall<TaskOutputFile[]>('task_getOutputs', { task_id: taskId })
@@ -885,7 +885,7 @@ export const taskApi = {
     }
   },
   
-  // 获取任务运行状态
+  // Translated comment
   getTaskRuntimeStatus: async (taskId: string): Promise<TaskRuntimeStatus | null> => {
     try {
       return await rpcCall<TaskRuntimeStatus>('task_getRuntimeStatus', { task_id: taskId })
@@ -895,22 +895,22 @@ export const taskApi = {
   },
 }
 
-// ========== 加密任务接口 ==========
+// ========== Encrypted task APIs ==========
 
 export interface EncryptedTaskCreateInput {
   title: string
   description: string
-  codeData: string  // Base64 编码的代码数据
-  inputData?: string  // Base64 编码的输入数据（小文件）
-  inputDataRef?: string  // 大文件引用（通过 chunkedUpload 获取的 fileId）
+  codeData: string  // Translated comment
+  inputData?: string  // Translated comment
+  inputDataRef?: string  // Translated comment
   taskType: string
   estimatedHours: number
   budgetPerHour: number
-  receivers?: string[]  // 指定执行节点
+  receivers?: string[]  // Translated comment
   userPublicKey?: string
   requirements?: string
-  maxMemoryGb?: number  // 最大内存（GB），默认8，最大64
-  maxTimeoutHours?: number  // 最大执行时间（小时），默认同 estimatedHours
+  maxMemoryGb?: number  // Translated comment
+  maxTimeoutHours?: number  // Translated comment
 }
 
 export interface EncryptedTaskResult {
@@ -940,7 +940,7 @@ export interface KeyPairResult {
 }
 
 export const encryptedTaskApi = {
-  // 生成加密密钥对
+  // Translated comment
   generateKeypair: async (): Promise<KeyPairResult | null> => {
     try {
       return await rpcCall<KeyPairResult>('encryptedTask_generateKeypair', {})
@@ -949,7 +949,7 @@ export const encryptedTaskApi = {
     }
   },
   
-  // 创建加密任务
+  // Translated comment
   create: async (input: EncryptedTaskCreateInput): Promise<EncryptedTaskResult> => {
     return await rpcCall<EncryptedTaskResult>('encryptedTask_create', {
       title: input.title,
@@ -968,7 +968,7 @@ export const encryptedTaskApi = {
     })
   },
   
-  // 提交加密任务
+  // Translated comment
   submit: async (taskId: string, userPrivateKey?: string): Promise<{ submitted: boolean; status: string } | null> => {
     try {
       return await rpcCall<{ submitted: boolean; status: string }>('encryptedTask_submit', { 
@@ -980,7 +980,7 @@ export const encryptedTaskApi = {
     }
   },
   
-  // 获取任务状态
+  // Translated comment
   getStatus: async (taskId: string): Promise<EncryptedTaskStatus | null> => {
     try {
       return await rpcCall<EncryptedTaskStatus>('encryptedTask_getStatus', { taskId })
@@ -989,7 +989,7 @@ export const encryptedTaskApi = {
     }
   },
   
-  // 获取任务结果
+  // Translated comment
   getResult: async (taskId: string, userPrivateKey?: string): Promise<{
     taskId: string
     status: string
@@ -1006,7 +1006,7 @@ export const encryptedTaskApi = {
     }
   },
   
-  // 获取计费报告
+  // Translated comment
   getBillingReport: async (taskId: string): Promise<{
     taskId: string
     totalCost: number
@@ -1019,18 +1019,18 @@ export const encryptedTaskApi = {
     }
   },
   
-  // 将字符串转为 Base64
+  // Translated comment
   encodeToBase64: (data: string): string => {
     return btoa(unescape(encodeURIComponent(data)))
   },
   
-  // 将文件转为 Base64
+  // Translated comment
   fileToBase64: (file: File): Promise<string> => {
     return new Promise((resolve, reject) => {
       const reader = new FileReader()
       reader.onload = () => {
         const result = reader.result as string
-        // 移除 data URL 前缀
+        // Translated comment
         const base64 = result.split(',')[1] || result
         resolve(base64)
       }
@@ -1040,7 +1040,7 @@ export const encryptedTaskApi = {
   }
 }
 
-// ========== 分块文件上传/下载接口 ==========
+// ========== Chunked file upload/download APIs ==========
 
 const CHUNK_SIZE = 4 * 1024 * 1024 // 4MB chunks
 
@@ -1059,7 +1059,7 @@ export interface DownloadableTaskOutputFile {
 
 export const fileTransferApi = {
   /**
-   * 分块上传大文件，返回 fileId 供 inputDataRef 使用
+   * Translated comment
    */
   chunkedUpload: async (
     file: File,
@@ -1069,21 +1069,21 @@ export const fileTransferApi = {
       const totalSize = file.size
       const totalChunks = Math.ceil(totalSize / CHUNK_SIZE)
 
-      // 阶段1：计算 SHA256
+      // Translated comment
       onProgress?.({ phase: 'hashing', percent: 0, uploadedBytes: 0, totalBytes: totalSize })
       const sha256 = await computeSHA256(file)
       onProgress?.({ phase: 'hashing', percent: 100, uploadedBytes: 0, totalBytes: totalSize })
 
-      // 阶段2：初始化上传
+      // Translated comment
       const initResult = await rpcCall<{ uploadId: string; chunkSize: number }>('file_initUpload', {
         filename: file.name,
         totalSize,
         sha256Hash: sha256,
       })
-      if (!initResult) throw new Error('初始化上传失败')
+      if (!initResult) throw new Error('Failed to initialize upload')
       const uploadId = initResult.uploadId
 
-      // 阶段3：分块上传
+      // Translated comment
       onProgress?.({ phase: 'uploading', percent: 0, uploadedBytes: 0, totalBytes: totalSize })
       for (let i = 0; i < totalChunks; i++) {
         const start = i * CHUNK_SIZE
@@ -1096,7 +1096,7 @@ export const fileTransferApi = {
           chunkIndex: i,
           chunkData: chunkBase64,
         })
-        if (!chunkResult) throw new Error(`上传块 ${i} 失败`)
+        if (!chunkResult) throw new Error(`Chunk upload failed: ${i}`)
 
         onProgress?.({
           phase: 'uploading',
@@ -1106,23 +1106,23 @@ export const fileTransferApi = {
         })
       }
 
-      // 阶段4：完成上传
+      // Translated comment
       onProgress?.({ phase: 'finalizing', percent: 99, uploadedBytes: totalSize, totalBytes: totalSize })
       const finalResult = await rpcCall<{ fileId: string; verified: boolean }>('file_finalizeUpload', {
         uploadId,
       })
-      if (!finalResult || !finalResult.verified) throw new Error('文件校验失败')
+      if (!finalResult || !finalResult.verified) throw new Error('File verification failed')
 
       onProgress?.({ phase: 'done', percent: 100, uploadedBytes: totalSize, totalBytes: totalSize })
       return finalResult.fileId
     } catch (e) {
-      console.error('分块上传失败:', e)
+      console.error('Chunked upload failed:', e)
       return null
     }
   },
 
   /**
-   * 取消正在进行的上传
+   * Translated comment
    */
   cancelUpload: async (uploadId: string): Promise<boolean> => {
     try {
@@ -1134,7 +1134,7 @@ export const fileTransferApi = {
   },
 
   /**
-   * 查询上传进度（可用于断线重连后恢复）
+   * Translated comment
    */
   getUploadProgress: async (uploadId: string) => {
     try {
@@ -1152,7 +1152,7 @@ export const fileTransferApi = {
   },
 
   /**
-   * 获取任务输出文件列表
+   * Translated comment
    */
   getTaskOutputs: async (taskId: string): Promise<DownloadableTaskOutputFile[]> => {
     try {
@@ -1164,7 +1164,7 @@ export const fileTransferApi = {
   },
 
   /**
-   * 分块下载任务输出文件
+   * Translated comment
    */
   downloadTaskOutput: async (
     taskId: string,
@@ -1172,7 +1172,7 @@ export const fileTransferApi = {
     onProgress?: (percent: number) => void,
   ): Promise<Blob | null> => {
     try {
-      // 先获取文件信息
+      // Translated comment
       const info = await rpcCall<{ size: number; totalChunks: number }>('file_downloadTaskOutput', {
         taskId,
         filename,
@@ -1188,20 +1188,20 @@ export const fileTransferApi = {
           'file_downloadTaskOutput',
           { taskId, filename, chunkIndex: i },
         )
-        if (!chunkResult) throw new Error(`下载块 ${i} 失败`)
+        if (!chunkResult) throw new Error(`Chunk download failed: ${i}`)
         chunks.push(base64ToArrayBuffer(chunkResult.chunkData))
         onProgress?.(Math.round(((i + 1) / totalChunks) * 100))
       }
 
       return new Blob(chunks)
     } catch (e) {
-      console.error('下载输出文件失败:', e)
+      console.error('Failed to download output file:', e)
       return null
     }
   },
 }
 
-// ---- 辅助函数 ----
+// Translated comment
 
 async function computeSHA256(file: File): Promise<string> {
   const buffer = await file.arrayBuffer()
@@ -1230,7 +1230,7 @@ function base64ToArrayBuffer(b64: string): ArrayBuffer {
   return arr.buffer
 }
 
-// ========== 算力市场接口 ==========
+// ========== Compute market APIs ==========
 
 export interface MarketOrder {
   orderId: string
@@ -1301,7 +1301,7 @@ export const marketApi = {
   },
 }
 
-// ========== 治理接口 ==========
+// ========== Governance APIs ==========
 
 export interface Proposal {
   proposalId: string
@@ -1310,22 +1310,22 @@ export interface Proposal {
   category: 'parameter' | 'funding' | 'protocol' | 'emergency'
   status: 'draft' | 'voting' | 'passed' | 'rejected' | 'executed'
   
-  // 投票
+  // Translated comment
   votesFor: number
   votesAgainst: number
   votesAbstain: number
   quorum: number
   threshold: number
   
-  // 时间
+  // Translated comment
   createdAt: string
   votingStartsAt: string
   votingEndsAt: string
   
-  // 提案者
+  // Translated comment
   proposerId: string
   
-  // 资金（如果是资金提案）
+  // Translated comment
   fundingAmount?: number
   fundingRecipient?: string
 }
@@ -1366,7 +1366,7 @@ export const governanceApi = {
     rpcCall<{ status: string }>('governance_vote', { proposal_id: proposalId, vote }),
 }
 
-// ========== 矿工接口 ==========
+// ========== Miner APIs ==========
 
 export interface Miner {
   minerId: string
@@ -1374,22 +1374,22 @@ export interface Miner {
   address: string
   status: 'online' | 'offline' | 'busy'
   
-  // 硬件
+  // Translated comment
   gpuType: string
   gpuCount: number
   
-  // 评分
+  // Translated comment
   behaviorScore: number
   acceptanceRate: number
   priceDiversity: number
   congestionHelp: number
   
-  // 统计
+  // Translated comment
   totalTasks: number
   completedTasks: number
   totalEarnings: number
   
-  // 信誉
+  // Translated comment
   reputationLevel: 'bronze' | 'silver' | 'gold' | 'platinum'
   schedulingMultiplier: number
 }
@@ -1442,7 +1442,7 @@ export const minerApi = {
     } catch (e) {
       return {
         success: false,
-        message: '注册失败',
+        message: 'Registration failed',
         error: String(e)
       }
     }
@@ -1469,14 +1469,14 @@ export const minerApi = {
     } catch (e) {
       return {
         success: false,
-        message: '更新失败',
+        message: 'Update failed',
         error: String(e)
       }
     }
   },
 }
 
-// ========== 统计接口 ==========
+// ========== Statistics APIs ==========
 
 export interface BlockStats {
   taskBlocks: number
@@ -1551,7 +1551,7 @@ export const statsApi = {
   },
 }
 
-// ========== 隐私接口 ==========
+// ========== Privacy APIs ==========
 
 export interface AddressUsageInfo {
   address: string
@@ -1598,7 +1598,7 @@ export const privacyApi = {
   },
 }
 
-// ========== 订单接口 ==========
+// ========== Order APIs ==========
 
 export interface OrderData {
   id: string
@@ -1632,7 +1632,7 @@ export const orderApi = {
   },
 }
 
-// ========== 质押接口 ==========
+// ========== Staking APIs ==========
 
 export interface StakingRecord {
   id: string
@@ -1643,7 +1643,7 @@ export interface StakingRecord {
   status: 'active' | 'completed' | 'pending' | 'burned'
   rewards: number
   apy?: number
-  // 评价质押相关字段
+  // Translated comment
   taskId?: string
   rating?: number
   createdAt: number
@@ -1661,19 +1661,19 @@ export const stakingApi = {
     try {
       return await rpcCall<{ success: boolean, stakeId?: string, message?: string }>('staking_stake', { amount, sector, duration })
     } catch {
-      return { success: false, message: '质押失败' }
+      return { success: false, message: 'Staking failed' }
     }
   },
   unstake: async (stakeId: string): Promise<{ success: boolean, message?: string }> => {
     try {
       return await rpcCall<{ success: boolean, message?: string }>('staking_unstake', { stakeId })
     } catch {
-      return { success: false, message: '解除质押失败' }
+      return { success: false, message: 'Unstake failed' }
     }
   },
 }
 
-// ========== 区块链接口 ==========
+// ========== Blockchain APIs ==========
 
 export interface SBoxInfo {
   score: number
@@ -1724,7 +1724,7 @@ export const blockchainApi = {
   },
 }
 
-// ========== 动态定价接口 ==========
+// ========== Dynamic pricing APIs ==========
 
 export interface GpuPricing {
   gpuType: string
@@ -1742,7 +1742,7 @@ export interface PriceForecast {
 }
 
 export const pricingApi = {
-  // 获取基础费率
+  // Translated comment
   getBaseRates: async (): Promise<Record<string, number>> => {
     try {
       return await rpcCall<Record<string, number>>('pricing_getBaseRates', {})
@@ -1750,7 +1750,7 @@ export const pricingApi = {
       return {}
     }
   },
-  // 获取实时价格
+  // Translated comment
   getRealTimePrice: async (gpuType: string): Promise<GpuPricing | null> => {
     try {
       return await rpcCall<GpuPricing>('pricing_getRealTimePrice', { gpuType })
@@ -1758,7 +1758,7 @@ export const pricingApi = {
       return null
     }
   },
-  // 计算任务价格
+  // Translated comment
   calculatePrice: async (gpuType: string, hours: number, gpuCount: number = 1): Promise<{
     basePrice: number
     finalPrice: number
@@ -1770,7 +1770,7 @@ export const pricingApi = {
       return { basePrice: 0, finalPrice: 0, breakdown: [] }
     }
   },
-  // 获取市场供需状态
+  // Translated comment
   getMarketState: async (): Promise<{
     totalSupply: number
     totalDemand: number
@@ -1783,7 +1783,7 @@ export const pricingApi = {
       return { totalSupply: 0, totalDemand: 0, utilizationRate: 0, byGpuType: {} }
     }
   },
-  // 获取价格预测
+  // Translated comment
   getPriceForecast: async (gpuType: string, hours: number = 24): Promise<PriceForecast[]> => {
     try {
       return await rpcCall<PriceForecast[]>('pricing_getPriceForecast', { gpuType, hours })
@@ -1791,7 +1791,7 @@ export const pricingApi = {
       return []
     }
   },
-  // 获取时段价格表
+  // Translated comment
   getTimeSlotSchedule: async (): Promise<{
     slots: { startHour: number; endHour: number; multiplier: number; label: string }[]
   }> => {
@@ -1803,7 +1803,7 @@ export const pricingApi = {
   },
 }
 
-// ========== 算力订单簿接口 ==========
+// Translated comment
 
 export interface OrderBookEntry {
   orderId: string
@@ -1826,7 +1826,7 @@ export interface OrderBookMatch {
 }
 
 export const orderbookApi = {
-  // 提交卖单（矿工）
+  // Translated comment
   submitAsk: async (params: {
     gpuType: string
     gpuCount: number
@@ -1840,7 +1840,7 @@ export const orderbookApi = {
       return null
     }
   },
-  // 提交买单（用户）
+  // Translated comment
   submitBid: async (params: {
     gpuType: string
     gpuCount: number
@@ -1854,15 +1854,15 @@ export const orderbookApi = {
       return null
     }
   },
-  // 取消订单
+  // Translated comment
   cancelOrder: async (orderId: string): Promise<{ success: boolean; message: string }> => {
     try {
       return await rpcCall('orderbook_cancelOrder', { orderId })
     } catch {
-      return { success: false, message: '取消失败' }
+      return { success: false, message: 'Cancel failed' }
     }
   },
-  // 获取订单簿
+  // Translated comment
   getOrderBook: async (gpuType?: string): Promise<{
     asks: OrderBookEntry[]
     bids: OrderBookEntry[]
@@ -1875,7 +1875,7 @@ export const orderbookApi = {
       return { asks: [], bids: [], spread: 0, lastPrice: 0 }
     }
   },
-  // 获取市场价格
+  // Translated comment
   getMarketPrice: async (gpuType: string): Promise<{
     bid: number
     ask: number
@@ -1888,7 +1888,7 @@ export const orderbookApi = {
       return { bid: 0, ask: 0, last: 0, volume24h: 0 }
     }
   },
-  // 获取我的订单
+  // Translated comment
   getMyOrders: async (): Promise<{ orders: OrderBookEntry[]; total: number }> => {
     try {
       return await rpcCall('orderbook_getMyOrders', {})
@@ -1896,7 +1896,7 @@ export const orderbookApi = {
       return { orders: [], total: 0 }
     }
   },
-  // 获取成交记录
+  // Translated comment
   getMatches: async (limit: number = 20): Promise<{ matches: OrderBookMatch[]; total: number }> => {
     try {
       return await rpcCall('orderbook_getMatches', { limit })
@@ -1906,7 +1906,7 @@ export const orderbookApi = {
   },
 }
 
-// ========== 任务队列接口 ==========
+// ========== Task queue APIs ==========
 
 export interface QueuePosition {
   taskId: string
@@ -1916,7 +1916,7 @@ export interface QueuePosition {
 }
 
 export const queueApi = {
-  // 任务入队
+  // Translated comment
   enqueue: async (taskId: string, priority: string = 'normal'): Promise<{
     position: number
     estimatedWaitTime: number
@@ -1927,7 +1927,7 @@ export const queueApi = {
       return { position: -1, estimatedWaitTime: 0 }
     }
   },
-  // 获取队列位置
+  // Translated comment
   getPosition: async (taskId: string): Promise<QueuePosition | null> => {
     try {
       return await rpcCall<QueuePosition>('queue_getPosition', { taskId })
@@ -1935,7 +1935,7 @@ export const queueApi = {
       return null
     }
   },
-  // 获取预估等待时间
+  // Translated comment
   getEstimatedWaitTime: async (gpuType: string, priority: string = 'normal'): Promise<{
     waitTime: number
     queueLength: number
@@ -1946,7 +1946,7 @@ export const queueApi = {
       return { waitTime: 0, queueLength: 0 }
     }
   },
-  // 获取队列统计
+  // Translated comment
   getStats: async (): Promise<{
     totalQueued: number
     byGpuType: Record<string, number>
@@ -1961,10 +1961,10 @@ export const queueApi = {
   },
 }
 
-// ========== 市场监控接口 ==========
+// ========== Market monitoring APIs ==========
 
 export const marketMonitorApi = {
-  // 获取市场监控面板
+  // Translated comment
   getDashboard: async (): Promise<{
     totalOrders: number
     activeMiners: number
@@ -1979,7 +1979,7 @@ export const marketMonitorApi = {
       return { totalOrders: 0, activeMiners: 0, totalGpuPower: 0, utilizationRate: 0, avgPrice: 0, priceChange24h: 0 }
     }
   },
-  // 获取供需曲线
+  // Translated comment
   getSupplyDemandCurve: async (): Promise<{
     supplyPoints: { price: number; quantity: number }[]
     demandPoints: { price: number; quantity: number }[]
@@ -1991,7 +1991,7 @@ export const marketMonitorApi = {
       return { supplyPoints: [], demandPoints: [], equilibriumPrice: 0 }
     }
   },
-  // 获取任务队列状态
+  // Translated comment
   getQueueStatus: async (): Promise<{
     pending: number
     running: number
@@ -2006,7 +2006,7 @@ export const marketMonitorApi = {
   },
 }
 
-// ========== 结算接口 ==========
+// ========== Settlement APIs ==========
 
 export interface SettlementRecord {
   settlementId: string
@@ -2021,7 +2021,7 @@ export interface SettlementRecord {
 }
 
 export const settlementApi = {
-  // 获取结算记录
+  // Translated comment
   getRecord: async (taskId: string): Promise<SettlementRecord | null> => {
     try {
       return await rpcCall<SettlementRecord>('settlement_getRecord', { taskId })
@@ -2029,7 +2029,7 @@ export const settlementApi = {
       return null
     }
   },
-  // 获取详细账单
+  // Translated comment
   getDetailedBill: async (taskId: string): Promise<{
     taskId: string
     items: { name: string; quantity: number; unitPrice: number; total: number }[]
@@ -2043,7 +2043,7 @@ export const settlementApi = {
       return { taskId, items: [], subtotal: 0, fees: 0, total: 0 }
     }
   },
-  // 获取矿工收益
+  // Translated comment
   getMinerEarnings: async (period?: string): Promise<{
     total: number
     breakdown: { date: string; amount: number; taskCount: number }[]
@@ -2057,10 +2057,10 @@ export const settlementApi = {
   },
 }
 
-// ========== 计费接口 ==========
+// ========== Billing APIs ==========
 
 export const billingApi = {
-  // 计算资源费用
+  // Translated comment
   calculateCost: async (params: {
     gpuType: string
     gpuCount: number
@@ -2081,7 +2081,7 @@ export const billingApi = {
       return { gpuCost: 0, memoryCost: 0, storageCost: 0, networkCost: 0, totalCost: 0, currency: 'MAIN' }
     }
   },
-  // 获取计费费率
+  // Translated comment
   getRates: async (): Promise<{
     gpu: Record<string, number>
     memory: number
@@ -2094,7 +2094,7 @@ export const billingApi = {
       return { gpu: {}, memory: 0, storage: 0, network: 0 }
     }
   },
-  // 估算任务费用
+  // Translated comment
   estimateTask: async (taskId: string): Promise<{
     estimatedCost: number
     breakdown: { resource: string; cost: number }[]
@@ -2108,7 +2108,7 @@ export const billingApi = {
   },
 }
 
-// ========== UTXO 接口 ==========
+// ========== UTXO APIs ==========
 
 export interface UTXO {
   txId: string
@@ -2141,7 +2141,7 @@ export interface UTXOTraceResult {
 }
 
 export const utxoApi = {
-  // 获取地址的可用 UTXO
+  // Translated comment
   getUTXOs: async (address?: string): Promise<UTXO[]> => {
     try {
       return await rpcCall<UTXO[]>('account_getUTXOs', { address })
@@ -2150,7 +2150,7 @@ export const utxoApi = {
     }
   },
   
-  // 追溯 UTXO 来源
+  // Translated comment
   trace: async (txId: string, outputIndex: number = 0): Promise<UTXOTraceResult> => {
     try {
       return await rpcCall<UTXOTraceResult>('account_traceUTXO', { txid: txId, output_index: outputIndex })
@@ -2167,7 +2167,7 @@ export const utxoApi = {
   }
 }
 
-// ========== 区块浏览器接口 ==========
+// ========== Explorer APIs ==========
 
 export interface Block {
   height: number
@@ -2230,7 +2230,7 @@ export interface ChainInfo {
 }
 
 export const explorerApi = {
-  // 获取链信息（支持按板块）
+  // Translated comment
   getChainInfo: async (sector?: string): Promise<ChainInfo> => {
     try {
       return await rpcCall<ChainInfo>('chain_getInfo', { sector })
@@ -2239,7 +2239,7 @@ export const explorerApi = {
     }
   },
   
-  // 获取当前高度
+  // Translated comment
   getHeight: async (sector?: string): Promise<number> => {
     try {
       const result = await rpcCall<{ height: number }>('chain_getHeight', { sector })
@@ -2249,7 +2249,7 @@ export const explorerApi = {
     }
   },
   
-  // 获取最新区块列表
+  // Translated comment
   getLatestBlocks: async (sector?: string, limit: number = 20): Promise<Block[]> => {
     try {
       const result = await rpcCall<{ blocks: Block[] }>('block_getLatest', { sector, limit })
@@ -2259,7 +2259,7 @@ export const explorerApi = {
     }
   },
   
-  // 按高度获取区块
+  // Translated comment
   getBlockByHeight: async (height: number, sector?: string): Promise<Block | null> => {
     try {
       return await rpcCall<Block>('block_getByHeight', { height, sector })
@@ -2268,7 +2268,7 @@ export const explorerApi = {
     }
   },
   
-  // 按哈希获取区块
+  // Translated comment
   getBlockByHash: async (hash: string): Promise<Block | null> => {
     try {
       return await rpcCall<Block>('block_getByHash', { hash })
@@ -2277,7 +2277,7 @@ export const explorerApi = {
     }
   },
   
-  // 获取交易详情
+  // Translated comment
   getTransaction: async (txId: string): Promise<TransactionInfo | null> => {
     try {
       return await rpcCall<TransactionInfo>('tx_get', { txid: txId })
@@ -2286,13 +2286,13 @@ export const explorerApi = {
     }
   },
   
-  // 搜索（地址/交易/区块）
+  // Translated comment
   search: async (query: string): Promise<{
     type: 'address' | 'transaction' | 'block' | 'unknown'
     result: unknown
   }> => {
     try {
-      // 先尝试作为交易ID查询
+      // Translated comment
       const tx = await rpcCall<TransactionInfo | null>('tx_get', { txid: query })
       if (tx) {
         return { type: 'transaction', result: tx }
@@ -2302,7 +2302,7 @@ export const explorerApi = {
     }
     
     try {
-      // 尝试作为区块哈希
+      // Translated comment
       const block = await rpcCall<Block | null>('block_getByHash', { hash: query })
       if (block) {
         return { type: 'block', result: block }
@@ -2311,7 +2311,7 @@ export const explorerApi = {
       // ignore
     }
     
-    // 尝试作为地址
+    // Translated comment
     if (query.startsWith('MC_') || query.length === 42) {
       const balance = await rpcCall<{ balance: number }>('account_getBalance', { address: query })
       if (balance) {
@@ -2323,7 +2323,7 @@ export const explorerApi = {
   }
 }
 
-// ========== P2P 分布式任务接口 ==========
+// ========== P2P distributed task APIs ==========
 
 export interface P2PTask {
   taskId: string
@@ -2387,7 +2387,7 @@ export interface P2PMiner {
 }
 
 export const p2pTaskApi = {
-  // 创建 P2P 分布式任务
+  // Translated comment
   create: async (params: P2PTaskCreateParams): Promise<{
     success: boolean
     taskId?: string
@@ -2405,7 +2405,7 @@ export const p2pTaskApi = {
     }
   },
 
-  // 分发任务到 P2P 网络
+  // Translated comment
   distribute: async (taskId: string): Promise<{
     success: boolean
     taskId?: string
@@ -2422,7 +2422,7 @@ export const p2pTaskApi = {
     }
   },
 
-  // 获取任务状态
+  // Translated comment
   getStatus: async (taskId: string): Promise<P2PTask | null> => {
     try {
       const result = await rpcCall<P2PTask>('p2pTask_getStatus', { taskId })
@@ -2433,7 +2433,7 @@ export const p2pTaskApi = {
     }
   },
 
-  // 获取任务列表
+  // Translated comment
   getList: async (params?: {
     status?: string
     limit?: number
@@ -2446,7 +2446,7 @@ export const p2pTaskApi = {
     }
   },
 
-  // 获取分发器统计
+  // Translated comment
   getStats: async (): Promise<P2PTaskStats | null> => {
     try {
       return await rpcCall<P2PTaskStats>('p2pTask_getStats', {})
@@ -2455,7 +2455,7 @@ export const p2pTaskApi = {
     }
   },
 
-  // 取消任务
+  // Translated comment
   cancel: async (taskId: string): Promise<{
     success: boolean
     taskId?: string
@@ -2470,7 +2470,7 @@ export const p2pTaskApi = {
     }
   },
 
-  // 注册矿工节点
+  // Translated comment
   registerMiner: async (params: {
     minerId: string
     address?: string
@@ -2491,7 +2491,7 @@ export const p2pTaskApi = {
     }
   },
 
-  // 获取可用矿工列表
+  // Translated comment
   getMiners: async (): Promise<{ miners: P2PMiner[], total: number }> => {
     try {
       return await rpcCall('p2pTask_getMiners', {})
@@ -2500,7 +2500,7 @@ export const p2pTaskApi = {
     }
   },
 
-  // 获取任务结果
+  // Translated comment
   getResult: async (taskId: string): Promise<{
     taskId: string
     status: string
@@ -2519,9 +2519,9 @@ export const p2pTaskApi = {
   }
 }
 
-// ========== P2P 加密直传接口 ==========
-// 用户与算力节点直接传输数据，不经过服务器
-// 服务器只做匹配、加密信令、结算
+// ========== P2P encrypted direct-transfer APIs ==========
+// Translated comment
+// Translated comment
 
 export interface P2PTunnelTicket {
   ticketId: string
@@ -2538,7 +2538,7 @@ export interface P2PTunnelTicket {
 
 export const p2pTunnelApi = {
   /**
-   * 矿工注册 P2P 数据端点（IP 加密存储）
+   * Translated comment
    */
   registerEndpoint: async (ip: string, port: number, publicKey: string): Promise<{
     success: boolean
@@ -2554,7 +2554,7 @@ export const p2pTunnelApi = {
   },
 
   /**
-   * 启动矿工侧 P2P 数据服务器
+   * Translated comment
    */
   startServer: async (host?: string, port?: number): Promise<{
     success: boolean
@@ -2570,8 +2570,8 @@ export const p2pTunnelApi = {
   },
 
   /**
-   * 用户请求 P2P 连接票据
-   * 票据中包含加密的矿工 IP:Port，只有用户能解密
+   * Translated comment
+   * Translated comment
    */
   requestTicket: async (taskId: string, userPublicKey: string): Promise<{
     success: boolean
@@ -2587,7 +2587,7 @@ export const p2pTunnelApi = {
   },
 
   /**
-   * 查询 P2P 传输状态
+   * Translated comment
    */
   getStatus: async (params: { sessionId?: string; taskId?: string }): Promise<{
     sessionId?: string
@@ -2606,7 +2606,7 @@ export const p2pTunnelApi = {
   },
 
   /**
-   * 查询矿工 P2P 状态（不暴露 IP）
+   * Translated comment
    */
   getMinerInfo: async (minerId?: string): Promise<{
     minerId: string
@@ -2621,3 +2621,4 @@ export const p2pTunnelApi = {
     }
   },
 }
+
