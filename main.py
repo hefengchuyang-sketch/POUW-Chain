@@ -384,11 +384,24 @@ class POUWNode:
             self.consensus_engine.reward_calculator.treasury_rate = rate
             ChainParams = type(self.consensus_engine).TREASURY_RATE if hasattr(type(self.consensus_engine), 'TREASURY_RATE') else None
             log.info(f"财库税率已配置: {rate*100:.1f}%")
+
+        # 配置混用共识模式
+        consensus_mode = consensus_cfg.get("mode", "mixed")
+        sbox_ratio = float(consensus_cfg.get("sbox_ratio", 0.5))
+        sbox_enabled = consensus_cfg.get("sbox_enabled", True)
+        self.consensus_engine.configure_consensus_mode(
+            mode=consensus_mode,
+            sbox_ratio=sbox_ratio,
+            sbox_enabled=sbox_enabled,
+        )
         
         # 网络类型标记
         self.consensus_engine.network_type = network_type
         
-        log.info(f"共识引擎初始化: {node_id} (网络={network_type})")
+        log.info(
+            f"共识引擎初始化: {node_id} (网络={network_type}, mode={self.consensus_engine.consensus_mode}, "
+            f"sbox_ratio={self.consensus_engine.consensus_sbox_ratio:.2f})"
+        )
     
     def _init_sector_ledger(self):
         """初始化板块币账本。"""

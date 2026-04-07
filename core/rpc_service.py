@@ -7703,7 +7703,12 @@ class NodeRPCService:
                 "message": "模型已通过 TEE 公钥完成端到端机密加密，仅受信任硬件内可解密。"
             }
         except Exception as e:
-            raise RPCError(RPCErrorCode.INTERNAL_ERROR.value, f"Failed to deploy confidential model: {str(e)}")
+            import logging
+            logging.getLogger('rpc').exception("Failed to deploy confidential model")
+            raise RPCError(
+                RPCErrorCode.INTERNAL_ERROR.value,
+                "Failed to deploy confidential model"
+            )
 
     def _tee_get_task_result(self, taskId: str, **kwargs) -> Optional[Dict]:
         """获取机密任务结果"""

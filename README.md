@@ -37,6 +37,12 @@ An innovative decentralized blockchain platform that transforms real computation
 - Multi-sector VRF selection: all sectors mine independently, one winner per block
 - Chain data compression: compact mode stores only S-Box hash (~250 bytes vs ~700 bytes/block)
 
+### Hybrid Consensus Mode (POUW + S-Box PoUW)
+- Built-in mixed mode supports both POUW and SBOX_POUW in the same network
+- `consensus.mode` controls strategy: `mixed`, `sbox_only`, `pouw_only`
+- `consensus.sbox_ratio` controls SBOX_POUW target share in mixed mode (0.0 - 1.0)
+- Automatic fallback keeps liveness: S-Box unavailable -> POUW, both unavailable -> PoW fallback
+
 ### Multi-Sector Architecture
 - Sectors divided by hardware type: H100, RTX4090, RTX3080, CPU, GENERAL
 - Each sector produces blocks and halves independently
@@ -282,6 +288,23 @@ class AccountNonceManager:
 | 0.3% | Miner | Block-producing miner address |
 | 0.2% | Foundation | Multi-sig address |
 
+### 6. Hybrid Consensus Policy
+
+`consensus.mode` and `consensus.sbox_ratio` let operators tune production behavior:
+
+- `mixed`: deterministic ratio-based mix of POUW and SBOX_POUW
+- `sbox_only`: prioritize SBOX_POUW, fallback to POUW when unavailable
+- `pouw_only`: run classic POUW path only
+
+Example:
+
+```yaml
+consensus:
+    mode: mixed
+    sbox_ratio: 0.65
+    sbox_enabled: true
+```
+
 ---
 
 ## API Documentation
@@ -388,9 +411,9 @@ Copyright (c) 2026 POUW Chain
 
 ## Contact
 
-- GitHub Issues: [Submit an issue](https://github.com/hefengchuyang-sketch/maincoin?tab=readme-ov-file)
+- GitHub Issues: [Submit an issue](https://github.com/hefengchuyang-sketch/maincoin/issues/new/choose)
 - Email: yuhanliu050128@gmail.com
 
 ---
 
-*Last updated: 2026-03-08*
+*Last updated: 2026-04-07*

@@ -48,7 +48,7 @@ def test_p0_pouw_connected():
     from core.consensus import ConsensusEngine, ConsensusType
     engine = ConsensusEngine(node_id="test_p0", sector="MAIN")
     ct = engine.select_consensus()
-    assert ct == ConsensusType.POUW, f"Expected POUW, got {ct}"
+    assert ct in (ConsensusType.POUW, ConsensusType.SBOX_POUW), f"Expected PoUW-family consensus, got {ct}"
 
 _run_test("P0: POUW 挖矿已连接到共识循环", test_p0_pouw_connected)
 

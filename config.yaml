@@ -116,6 +116,15 @@ logging:
 
 # 共识参数（通常不需要修改）
 consensus:
+  # Consensus mode: mixed, sbox_only, pouw_only
+  mode: mixed
+
+  # In mixed mode, percentage of blocks to target SBOX_POUW (0.0 - 1.0)
+  sbox_ratio: 0.50
+
+  # Globally enable/disable S-Box mining path
+  sbox_enabled: true
+
   # 目标出块时间（秒）
   target_block_time: 30
   

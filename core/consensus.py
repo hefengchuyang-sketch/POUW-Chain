@@ -542,6 +542,9 @@ class ConsensusEngine:
         # S-Box PoUW 挖矿引擎
         self._sbox_miner = None  # 延迟初始化（需要知道活跃板块列表）
         self._sbox_mining_enabled = True  # 默认启用 S-Box 挖矿
+        self.consensus_mode = "mixed"  # mixed | sbox_only | pouw_only
+        self.consensus_sbox_ratio = 0.5  # mixed 模式下 SBOX_POUW 占比
+        self._consensus_round = 0
         
         # 线程安全锁 — 保护共享状态
         self._lock = threading.Lock()
@@ -975,27 +978,79 @@ class ConsensusEngine:
     def select_consensus(self) -> ConsensusType:
         """选择共识类型。
         
-        优先 SBOX_POUW (S-Box PoUW)，各板块并行挖矿。
-        其次传统 POUW，无用户任务时自动生成基准计算任务。
-        PoW 仅作为极端异常的最后保底。
+        支持三种策略：
+        - sbox_only: 优先并固定使用 SBOX_POUW（不可用则回退 POUW）
+        - pouw_only: 固定使用 POUW（异常时回退 PoW）
+        - mixed: 按配置比例在 SBOX_POUW/POUW 之间混用
         """
-        # 优先使用 S-Box PoUW
+        mode = (self.consensus_mode or "mixed").lower()
+        if mode not in {"mixed", "sbox_only", "pouw_only"}:
+            mode = "mixed"
+
+        # 保证 POUW 路径有任务可执行
+        if not self.has_pouw_tasks():
+            self._auto_generate_pouw()
+        has_pouw = self.has_pouw_tasks()
+
+        sbox_available = False
         if self._sbox_mining_enabled:
             miner = self._get_sbox_miner()
-            if miner is not None:
+            sbox_available = miner is not None
+
+        if mode == "pouw_only":
+            if has_pouw:
+                return ConsensusType.POUW
+            self.log("⚠️ POUW 任务生成失败，回退 PoW")
+            return ConsensusType.POW
+
+        if mode == "sbox_only":
+            if sbox_available:
                 return ConsensusType.SBOX_POUW
-        
-        if self.has_pouw_tasks():
+            if has_pouw:
+                return ConsensusType.POUW
+            self.log("⚠️ S-Box/POUW 均不可用，回退 PoW")
+            return ConsensusType.POW
+
+        # mixed 模式：按确定性比例混用
+        if sbox_available and has_pouw:
+            latest = self.get_latest_block()
+            seed = f"{latest.hash if latest else 'genesis'}:{self.node_id}:{self._consensus_round}".encode()
+            roll = int(hashlib.sha256(seed).hexdigest()[:8], 16) / 0xFFFFFFFF
+            self._consensus_round += 1
+            if roll < self.consensus_sbox_ratio:
+                return ConsensusType.SBOX_POUW
             return ConsensusType.POUW
-        
-        # 没有外部任务 → 自动生成基准 POUW 任务
-        self._auto_generate_pouw()
-        if self.has_pouw_tasks():
+
+        if sbox_available:
+            return ConsensusType.SBOX_POUW
+        if has_pouw:
             return ConsensusType.POUW
-        
-        # 极端异常情况才回退 PoW（正常不应到达此处）
-        self.log("⚠️ POUW 任务生成失败，回退 PoW")
+
+        self.log("⚠️ S-Box/POUW 均不可用，回退 PoW")
         return ConsensusType.POW
+
+    def configure_consensus_mode(
+        self,
+        mode: str = "mixed",
+        sbox_ratio: float = 0.5,
+        sbox_enabled: Optional[bool] = None,
+    ):
+        """配置共识模式。"""
+        mode = (mode or "mixed").lower().strip()
+        if mode not in {"mixed", "sbox_only", "pouw_only"}:
+            mode = "mixed"
+
+        ratio = max(0.0, min(1.0, float(sbox_ratio)))
+        self.consensus_mode = mode
+        self.consensus_sbox_ratio = ratio
+        if sbox_enabled is not None:
+            self._sbox_mining_enabled = bool(sbox_enabled)
+
+        self.log(
+            f"⚙️ 共识模式已配置: mode={self.consensus_mode}, "
+            f"sbox_ratio={self.consensus_sbox_ratio:.2f}, "
+            f"sbox_enabled={self._sbox_mining_enabled}"
+        )
     
     def _auto_generate_pouw(self, count: int = 4):
         """自动生成基准 POUW 任务并执行。
@@ -1893,7 +1948,10 @@ class ConsensusEngine:
         thread.start()
         
         sbox_status = "✅ S-Box PoUW 已启用" if self._sbox_mining_enabled else "❌ S-Box PoUW 未启用"
-        self.log(f"⛏️ 挖矿线程已启动 (区块类型: task/idle/validation) | {sbox_status}")
+        self.log(
+            f"⛏️ 挖矿线程已启动 (区块类型: task/idle/validation, mode={self.consensus_mode}, "
+            f"sbox_ratio={self.consensus_sbox_ratio:.2f}) | {sbox_status}"
+        )
     
     def stop(self):
         """停止挖矿。"""
@@ -1906,6 +1964,8 @@ class ConsensusEngine:
             "height": self.get_chain_height(),
             "difficulty": self.current_difficulty,
             "consensus": self.current_consensus.value,
+            "consensus_mode": self.consensus_mode,
+            "consensus_sbox_ratio": self.consensus_sbox_ratio,
             "pending_txs": len(self.pending_transactions),
             "pending_pouw": len(self.pending_pouw),
             "total_blocks_mined": self.total_blocks_mined,

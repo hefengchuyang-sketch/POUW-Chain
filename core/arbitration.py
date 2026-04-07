@@ -15,8 +15,6 @@
 
 import uuid
 import time
-import random
-import hashlib
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Callable, Any
 from enum import Enum
@@ -59,6 +57,7 @@ class Dispute:
     resolved_at: float = 0.0
     status: DisputeStatus = DisputeStatus.DISPUTED
     votes: Dict[str, str] = field(default_factory=dict)  # validator_id -> vote
+    selected_validators: List[str] = field(default_factory=list)
     resolution: str = ""
 
 
@@ -267,6 +266,7 @@ class ArbitrationSystem:
         import secrets
         _secure_rng = secrets.SystemRandom()
         selected = _secure_rng.sample(eligible, min(len(eligible), self.MIN_VALIDATORS * 2))
+        dispute.selected_validators = list(selected)
         
         dispute.status = DisputeStatus.VOTING
         
@@ -289,6 +289,10 @@ class ArbitrationSystem:
         
         if validator_id not in self.validator_pool:
             self.log(f"❌ [VOTE] {validator_id} is not a validator")
+            return False
+
+        if dispute.selected_validators and validator_id not in dispute.selected_validators:
+            self.log(f"❌ [VOTE] {validator_id} was not selected for dispute {dispute_id}")
             return False
         
         if validator_id in [dispute.renter_id, dispute.miner_id]:
