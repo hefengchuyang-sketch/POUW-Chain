@@ -6,7 +6,7 @@
 
 **Method 1: Double-Click Launch**
 ```
-Double-click to run: 启动.bat
+Double-click to run: start.bat
 ```
 
 **Method 2: PowerShell**

@@ -203,7 +203,7 @@ for gf in genesis_files:
 
 # ========== 8. Docker / 部署 ==========
 print("\n--- 8. 部署文件 ---")
-deploy_files = ["Dockerfile", "docker-compose.yml", "requirements.txt", "启动.bat", "start.ps1"]
+deploy_files = ["Dockerfile", "docker-compose.yml", "requirements.txt", "start.bat", "start.ps1"]
 for df in deploy_files:
     check(f"{df}", os.path.exists(df))
 
