@@ -488,6 +488,37 @@ export default function Mining() {
         </div>
       </div>
 
+      {(status?.acceptedOrders?.length || status?.runningPrograms?.length) ? (
+        <div className="card">
+          <h3 className="font-medium text-console-text mb-4">Order Runtime Visibility</h3>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <div className="p-4 bg-console-bg rounded-lg">
+              <div className="text-sm text-console-text-muted mb-3">Accepted Orders</div>
+              <div className="space-y-2 max-h-56 overflow-y-auto">
+                {(status?.acceptedOrders || []).map((o) => (
+                  <div key={o.orderId} className="border border-console-border rounded px-3 py-2 text-sm">
+                    <div className="font-medium text-console-text">{o.orderId} · {o.status}</div>
+                    <div className="text-console-text-muted">{o.gpuType} x{o.gpuCount} · {o.durationHours}h</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="p-4 bg-console-bg rounded-lg">
+              <div className="text-sm text-console-text-muted mb-3">Running Programs</div>
+              <div className="space-y-2 max-h-56 overflow-y-auto">
+                {(status?.runningPrograms || []).map((p) => (
+                  <div key={p.taskId} className="border border-console-border rounded px-3 py-2 text-sm">
+                    <div className="font-medium text-console-text">{p.taskId} · {p.status}</div>
+                    <div className="text-console-text-muted">Order: {p.orderId || '-'} · {p.progress}% · {p.runtime || '0:00:00'}</div>
+                    {p.program && <div className="text-console-accent mt-1">Program: {p.program}</div>}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {/* ==================== 矿工评分面板 ==================== */}
       <div className="card">
         <h3 className="font-medium text-console-text mb-4 flex items-center gap-2">

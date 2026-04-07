@@ -222,6 +222,24 @@ export interface MiningStatus {
   acceptingTasks: boolean
   p2pEnabled?: boolean
   p2pPort?: number
+  demoMainBalance?: number
+  acceptedOrders?: Array<{
+    orderId: string
+    status: string
+    gpuType: string
+    gpuCount: number
+    durationHours: number
+    program?: string
+    taskId?: string
+  }>
+  runningPrograms?: Array<{
+    taskId: string
+    orderId?: string
+    status: string
+    progress: number
+    program?: string
+    runtime?: string
+  }>
 }
 
 export interface MiningStartResult {
@@ -293,6 +311,9 @@ export const miningApi = {
         acceptingTasks: false,
         p2pEnabled: false,
         p2pPort: 0,
+        demoMainBalance: 0,
+        acceptedOrders: [],
+        runningPrograms: [],
       }
     }
   },
@@ -2126,6 +2147,22 @@ export interface ChainInfo {
   totalTransactions: number
   difficulty: number
   lastBlockTime: number
+  consensusMode?: 'mixed' | 'sbox_only' | 'pouw_only'
+  consensusSboxRatio?: number
+  consensusSelectedDistribution?: {
+    window: number
+    counts: { POUW: number; SBOX_POUW: number; POW: number }
+    sbox_ratio: number
+    pouw_ratio: number
+    pow_ratio: number
+  }
+  consensusMinedDistribution?: {
+    window: number
+    counts: { POUW: number; SBOX_POUW: number; POW: number }
+    sbox_ratio: number
+    pouw_ratio: number
+    pow_ratio: number
+  }
   sboxMiningEnabled?: boolean
   currentSbox?: { score: number; sector: string; nonlinearity: number }
   sboxLibrarySize?: number

@@ -260,7 +260,7 @@ export default function Explorer() {
 
       {/* 链概览 */}
       {chainInfo && (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-6 gap-4">
           <div className="console-card rounded-xl p-4">
             <div className="flex items-center gap-2 text-console-muted text-sm mb-1">
               <Layers className="w-4 h-4" />
@@ -295,6 +295,27 @@ export default function Explorer() {
             </div>
             <div className="text-lg font-bold text-console-text">
               {chainInfo.lastBlockTime ? formatRelativeTime(chainInfo.lastBlockTime) : '-'}
+            </div>
+          </div>
+          <div className="console-card rounded-xl p-4">
+            <div className="flex items-center gap-2 text-console-muted text-sm mb-1">
+              <Hash className="w-4 h-4" />
+              Consensus Mode
+            </div>
+            <div className="text-lg font-bold text-console-text">
+              {chainInfo.consensusMode || 'mixed'}
+            </div>
+          </div>
+          <div className="console-card rounded-xl p-4">
+            <div className="flex items-center gap-2 text-console-muted text-sm mb-1">
+              <Coins className="w-4 h-4" />
+              SBOX Ratio
+            </div>
+            <div className="text-lg font-bold text-console-text">
+              {typeof chainInfo.consensusSboxRatio === 'number' ? `${(chainInfo.consensusSboxRatio * 100).toFixed(0)}%` : '-'}
+            </div>
+            <div className="text-xs text-console-muted mt-1">
+              Selected: {chainInfo.consensusSelectedDistribution?.counts?.SBOX_POUW ?? 0} / {chainInfo.consensusSelectedDistribution?.window ?? 0}
             </div>
           </div>
         </div>

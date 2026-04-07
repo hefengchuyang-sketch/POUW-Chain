@@ -1,0 +1,26 @@
+version: '3.8'
+
+services:
+  demo-node:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    container_name: maincoin-demo-node
+    command:
+      - "--config=/app/config.yaml"
+      - "--port=9333"
+      - "--rpc-port=8545"
+      - "--data-dir=/data"
+    ports:
+      - "127.0.0.1:19333:9333"
+      - "127.0.0.1:18545:8545"
+    volumes:
+      - demo-data:/data
+      - demo-wallets:/wallets
+      - demo-logs:/logs
+    restart: unless-stopped
+
+volumes:
+  demo-data:
+  demo-wallets:
+  demo-logs:

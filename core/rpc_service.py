@@ -750,6 +750,11 @@ class NodeRPCService:
             RPCPermission.USER
         )
         self.registry.register(
+            "compute_completeOrder", self._compute_complete_order,
+            "完成算力订单并提交结果",
+            RPCPermission.USER
+        )
+        self.registry.register(
             "compute_cancelOrder", self._compute_cancel_order,
             "取消算力订单",
             RPCPermission.USER
@@ -3859,6 +3864,7 @@ class NodeRPCService:
         hash_rate = 0
         blocks_mined = 0
         total_rewards = 0.0
+        target_address = kwargs.get('address') or self.miner_address or ""
         
         if self.consensus_engine:
             is_mining = self.consensus_engine.is_mining if hasattr(self.consensus_engine, 'is_mining') else False
@@ -3871,18 +3877,45 @@ class NodeRPCService:
         
         # 计算总奖励（板块币）
         sector_rewards = {}
-        if self.sector_ledger and self.miner_address:
+        if self.sector_ledger and target_address:
             try:
-                all_balances = self.sector_ledger.get_all_balances(self.miner_address)
+                all_balances = self.sector_ledger.get_all_balances(target_address)
                 for coin_type, balance in all_balances.items():
                     sector_rewards[coin_type.sector] = balance.balance
                     total_rewards += balance.balance
             except Exception:
                 pass
+
+        miner_identity_set = {target_address, f"miner_{self.node_id}", self.node_id}
+        accepted_orders = []
+        running_programs = []
+
+        for oid, order in self.market_orders.items():
+            if order.get("acceptedBy") in miner_identity_set:
+                accepted_orders.append({
+                    "orderId": oid,
+                    "status": order.get("status", "accepted"),
+                    "gpuType": order.get("gpuType", "GPU"),
+                    "gpuCount": order.get("gpuCount", 1),
+                    "durationHours": order.get("durationHours", 1),
+                    "program": order.get("program", ""),
+                    "taskId": order.get("taskId", ""),
+                })
+
+        for tid, task in self.tasks.items():
+            if task.get("minerId") in miner_identity_set and task.get("status") in ("assigned", "running", "completed"):
+                running_programs.append({
+                    "taskId": tid,
+                    "orderId": task.get("orderId", ""),
+                    "status": task.get("status", "assigned"),
+                    "progress": task.get("progress", 0),
+                    "program": task.get("program") or task.get("description", ""),
+                    "runtime": task.get("runningTime", "0:00:00"),
+                })
         
         return {
             "isMining": is_mining,
-            "minerAddress": self.miner_address or "",
+            "minerAddress": target_address,
             "hashRate": round(hash_rate, 2),
             "blocksMined": blocks_mined,
             "totalRewards": round(total_rewards, 4),
@@ -3894,6 +3927,9 @@ class NodeRPCService:
             "gpuName": getattr(self, 'detected_gpu_name', 'CPU'),
             "p2pEnabled": self._p2p_data_server is not None,
             "p2pPort": self._p2p_data_server.actual_port if self._p2p_data_server else 0,
+            "acceptedOrders": accepted_orders,
+            "runningPrograms": running_programs,
+            "demoMainBalance": getattr(self, "_demo_main_balances", {}).get(target_address, 0.0),
         }
     
     def _mining_set_mode(self, mode: str = 'mine_only', **kwargs) -> Dict:
@@ -4506,7 +4542,7 @@ class NodeRPCService:
         total_usage = sum(s.get("usageCount", 0) for s in sub_addrs)
         main_usage = 0  # 主地址使用次数，从交易记录统计
         
-        # 尝试从交易记录统计主地址使用次数
+        target_address = kwargs.get('address', self.miner_address or "")
         if hasattr(self, 'transactions') and self.miner_address:
             for tx in self.transactions:
                 if tx.get('from') == self.miner_address or tx.get('to') == self.miner_address:
@@ -4690,26 +4726,68 @@ class NodeRPCService:
     
     # ============== 算力市场方法 ==============
     
-    def _compute_submit_order(self, gpu_type: str = None, gpu_count: int = 1, 
-                               price_per_hour: float = 1.0, **kwargs) -> Dict:
+    def _compute_submit_order(self, gpu_type: str = None, gpu_count: int = 1,
+                               price_per_hour: float = 1.0, duration_hours: int = 1,
+                               program: str = "", free_order: bool = False,
+                               buyer_address: str = None, **kwargs) -> Dict:
         """提交算力订单"""
+        if not hasattr(self, "_demo_main_balances"):
+            self._demo_main_balances = {}
+
+        buyer = buyer_address or kwargs.get('buyer_address') or self.miner_address or f"buyer_{self.node_id}"
+        unit_price = 0.0 if (free_order or kwargs.get('free_order', False)) else max(0.0, float(price_per_hour or 0.0))
+        gpu_count = max(1, int(gpu_count or 1))
+        duration_hours = max(1, int(duration_hours or kwargs.get('duration_hours', 1) or 1))
+        total_price = round(unit_price * gpu_count * duration_hours, 8)
+
+        if buyer not in self._demo_main_balances:
+            self._demo_main_balances[buyer] = 1000.0
+
+        if self._demo_main_balances[buyer] < total_price:
+            return {
+                "status": "failed",
+                "error": "insufficient_balance",
+                "message": "下单账户余额不足",
+                "buyerAddress": buyer,
+                "buyerBalance": self._demo_main_balances[buyer],
+                "required": total_price,
+            }
+
+        self._demo_main_balances[buyer] -= total_price
         order_id = f"order_{uuid.uuid4().hex[:8]}"
         order = {
             "orderId": order_id,
-            "minerId": self.node_id,
-            "minerName": f"节点 {self.node_id}",
+            "minerId": "",
+            "minerName": "",
             "gpuType": gpu_type or "RTX3080",
             "gpuCount": gpu_count,
-            "pricePerHour": price_per_hour,
+            "pricePerHour": unit_price,
+            "durationHours": duration_hours,
+            "totalPrice": total_price,
             "coin": f"{gpu_type or 'RTX3080'}_COIN",
             "available": True,
+            "status": "open",
+            "buyerAddress": buyer,
+            "acceptedBy": "",
+            "taskId": "",
+            "program": program,
+            "result": "",
+            "createdAt": int(time.time() * 1000),
+            "buyerBalanceAfter": round(self._demo_main_balances[buyer], 8),
             "rating": 5.0,
             "completedTasks": 0,
             "slaGuarantee": "99% 可用",
             "uptime": 100.0,
         }
         self.market_orders[order_id] = order
-        return {"orderId": order_id, "status": "submitted"}
+        return {
+            "orderId": order_id,
+            "status": "submitted",
+            "buyerAddress": buyer,
+            "buyerBalanceAfter": order["buyerBalanceAfter"],
+            "totalPrice": total_price,
+            "freeOrder": unit_price == 0.0,
+        }
     
     def _compute_get_order(self, order_id: str = None, **kwargs) -> Optional[Dict]:
         """获取订单详情"""
@@ -4739,20 +4817,87 @@ class NodeRPCService:
         order = self.market_orders[order_id]
         if not order.get("available", False):
             raise RPCError(RPCErrorCode.INVALID_PARAMS.value, "订单不可用")
+
+        miner_identity = kwargs.get("miner_address") or self.miner_address or f"miner_{self.node_id}"
         
         # 标记订单为不可用
         order["available"] = False
+        order["acceptedBy"] = miner_identity
+        order["minerId"] = miner_identity
+        order["minerName"] = miner_identity
+        order["status"] = "accepted"
+        order["acceptedAt"] = int(time.time() * 1000)
         
-        # 如果有任务ID，关联到任务
-        if task_id and task_id in self.tasks:
-            task = self.tasks[task_id]
-            task["status"] = "assigned"
-            task["minerId"] = order["minerId"]
+        linked_task_id = task_id or order.get("taskId") or f"task_{order_id}"
+        order["taskId"] = linked_task_id
+
+        if linked_task_id in self.tasks:
+            task = self.tasks[linked_task_id]
+            task["status"] = "running"
+            task["minerId"] = miner_identity
+            task["orderId"] = order_id
+            task["program"] = order.get("program", task.get("description", ""))
+            task["progress"] = max(task.get("progress", 0), 10)
+        else:
+            self.tasks[linked_task_id] = {
+                "taskId": linked_task_id,
+                "title": f"Compute Order {order_id}",
+                "description": order.get("program", "Order program"),
+                "taskType": "compute_order",
+                "status": "running",
+                "priority": "normal",
+                "price": order.get("totalPrice", 0),
+                "coin": "MAIN",
+                "gpuType": order.get("gpuType", "GPU"),
+                "gpuCount": order.get("gpuCount", 1),
+                "estimatedHours": order.get("durationHours", 1),
+                "progress": 10,
+                "program": order.get("program", ""),
+                "runningTime": "0:00:01",
+                "createdAt": datetime.datetime.now().isoformat() + "Z",
+                "buyerId": order.get("buyerAddress", ""),
+                "minerId": miner_identity,
+                "orderId": order_id,
+            }
+
+        if not hasattr(self, "_demo_main_balances"):
+            self._demo_main_balances = {}
+        self._demo_main_balances[miner_identity] = self._demo_main_balances.get(miner_identity, 0.0) + float(order.get("totalPrice", 0.0))
+        order["minerBalanceAfter"] = round(self._demo_main_balances[miner_identity], 8)
         
         return {
             "status": "success",
             "orderId": order_id,
+            "taskId": linked_task_id,
+            "acceptedBy": miner_identity,
             "message": "订单已接",
+        }
+
+    def _compute_complete_order(self, order_id: str, result_data: str = "", task_id: str = None, **kwargs) -> Dict:
+        """完成算力订单并回填结果给下单账户（Demo 流程）"""
+        if not order_id or order_id not in self.market_orders:
+            raise RPCError(RPCErrorCode.INVALID_PARAMS.value, f"订单不存在 {order_id}")
+
+        order = self.market_orders[order_id]
+        linked_task_id = task_id or order.get("taskId") or f"task_{order_id}"
+
+        if linked_task_id in self.tasks:
+            task = self.tasks[linked_task_id]
+            task["status"] = "completed"
+            task["progress"] = 100
+            task["finalResult"] = result_data or f"result_{order_id}"
+            task["completedAt"] = datetime.datetime.now().isoformat() + "Z"
+
+        order["status"] = "completed"
+        order["result"] = result_data or f"result_{order_id}"
+        order["finishedAt"] = int(time.time() * 1000)
+
+        return {
+            "status": "success",
+            "orderId": order_id,
+            "taskId": linked_task_id,
+            "result": order["result"],
+            "message": "订单已完成，结果已回传下单账户",
         }
     
     def _compute_cancel_order(self, order_id: str, **kwargs) -> Dict:
@@ -7878,7 +8023,13 @@ class NodeRPCService:
         
         system = self._get_orderbook_system()
         user_id = userId or self.miner_address or "user_anonymous"
-        bid_price = float(maxPricePerHour or maxPrice or 5.0)
+        if maxPricePerHour is not None:
+            bid_price = float(maxPricePerHour)
+        elif maxPrice is not None:
+            bid_price = float(maxPrice)
+        else:
+            bid_price = 5.0
+        bid_price = max(0.0, bid_price)
         hours = float(requiredHours or duration or 1.0)
         gpu_count = int(gpuCount or 1)
         

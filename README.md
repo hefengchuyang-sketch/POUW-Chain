@@ -359,6 +359,23 @@ For the full RPC reference, see [docs/API.md](docs/API.md) and [docs/USER_GUIDE.
 
 ## Development Guide
 
+## Demo Package (One-Click)
+
+The repository now includes a complete runnable demo package in `Demo/`.
+
+- One-click start: `Demo/start-demo.bat`
+- One-click stop and cleanup: `Demo/stop-demo.bat`
+- Demo script: `Demo/demo_runner.py`
+- Docker setup: `Demo/docker-compose.demo.yml`
+
+The demo validates:
+
+- Two-account workflow (Order Account + Mining Account)
+- Free order placement (`0 MAIN`)
+- Mining account visibility of accepted orders and running programs
+- Order completion and result return to the order account
+- Additional feature checks (`chain_getInfo`, `blockchain_getHeight`, `orderbook_submitBid`)
+
 ### Running Tests
 
 ```bash

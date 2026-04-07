@@ -84,6 +84,7 @@ export default function Market() {
   const [loading, setLoading] = useState(true)
   const [showOrderPanel, setShowOrderPanel] = useState(false)
   const [ordering, setOrdering] = useState(false)
+  const [freeOrder, setFreeOrder] = useState(false)
   
   // 订单参数
   const [orderDuration, setOrderDuration] = useState(1) // 小时
@@ -182,7 +183,8 @@ export default function Market() {
     
     if (!selectedBlock || !selectedSector) return
     
-    const totalPrice = selectedSector.pricePerHour * selectedBlock.gpuCount * orderDuration
+    const unitPrice = freeOrder ? 0 : selectedSector.pricePerHour
+    const totalPrice = unitPrice * selectedBlock.gpuCount * orderDuration
     const taxAmount = totalPrice * 0.01
     
     setOrdering(true)
@@ -191,7 +193,7 @@ export default function Market() {
       const result = await orderbookApi.submitBid({
         gpuType: selectedSector.type,
         gpuCount: selectedBlock.gpuCount,
-        maxPricePerHour: selectedSector.pricePerHour,
+          maxPricePerHour: unitPrice,
         duration: orderDuration,
       })
       
@@ -228,7 +230,7 @@ export default function Market() {
 
   const calculatePrice = () => {
     if (!selectedSector || !selectedBlock) return { base: 0, tax: 0, total: 0 }
-    const base = selectedSector.pricePerHour * selectedBlock.gpuCount * orderDuration
+    const base = (freeOrder ? 0 : selectedSector.pricePerHour) * selectedBlock.gpuCount * orderDuration
     const tax = base * 0.01
     return { base, tax, total: base + tax }
   }
@@ -496,6 +498,11 @@ export default function Market() {
                   </div>
                 </div>
               </div>
+
+              <label className="flex items-center justify-between p-3 bg-console-bg rounded-lg border border-console-border text-sm">
+                <span className="text-console-text">Free Order (0 MAIN demo mode)</span>
+                <input type="checkbox" checked={freeOrder} onChange={(e) => setFreeOrder(e.target.checked)} />
+              </label>
 
               {/* 费用明细 */}
               <div className="p-4 bg-console-bg rounded-lg border border-console-border space-y-2 text-sm">
