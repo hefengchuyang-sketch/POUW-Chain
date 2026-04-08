@@ -9,6 +9,13 @@ interface LogEntry {
   detail: string
 }
 
+type StepStatus = 'todo' | 'running' | 'done' | 'failed'
+
+interface FlowStepState {
+  status: StepStatus
+  detail: string
+}
+
 const nowLabel = () => new Date().toLocaleTimeString()
 
 export default function DemoFlow() {
@@ -62,9 +69,20 @@ export default function DemoFlow() {
     durationHours: 1,
     pricePerHour: 1,
     freeOrder: false,
+    enableEncryption: false,
     dockerImage: 'python:3.11-slim',
-    program: "print('hello from manual visual demo')",
+    program: "x = 6 * 7\nresult = {'value': x, 'message': 'from user program'}",
     resultData: 'manual_visual_demo_result_ok',
+  })
+  const [flowState, setFlowState] = useState<Record<string, FlowStepState>>({
+    buyer: { status: 'todo', detail: 'Create buyer account' },
+    submit: { status: 'todo', detail: 'Submit compute order' },
+    miner: { status: 'todo', detail: 'Create miner account' },
+    start: { status: 'todo', detail: 'Start miner task mode' },
+    encrypt: { status: 'todo', detail: 'Optional encryption before submit' },
+    accept: { status: 'todo', detail: 'Accept order as miner' },
+    complete: { status: 'todo', detail: 'Complete execution' },
+    result: { status: 'todo', detail: 'Fetch result as buyer' },
   })
 
   const appendLog = (action: string, ok: boolean, detail: unknown) => {
@@ -73,6 +91,16 @@ export default function DemoFlow() {
 
   const setRaw = (key: string, value: unknown) => {
     setRawData((prev) => ({ ...prev, [key]: value }))
+  }
+
+  const setStep = (step: string, status: StepStatus, detail?: string) => {
+    setFlowState((prev) => ({
+      ...prev,
+      [step]: {
+        status,
+        detail: detail || prev[step]?.detail || '',
+      },
+    }))
   }
 
   const useIdentity = (address: string, label: string) => {
@@ -174,21 +202,27 @@ export default function DemoFlow() {
     if (!targetTaskId) {
       setRuntimeResult('')
       setRuntimeResultError('taskId 为空，无法获取运行结果')
+      setStep('result', 'failed', 'Missing taskId')
+      return
+    }
+
+    if (!orderAddress || activeIdentity !== orderAddress) {
+      setRuntimeResult('')
+      setRuntimeResultError('仅下单账户可查看结果：请先点击 Use Buyer')
+      setStep('result', 'failed', 'Denied: switch to buyer first')
       return
     }
 
     setRuntimeResultLoading(true)
     setRuntimeResultError('')
+    setStep('result', 'running', 'Fetching owner-only result...')
     try {
-      // 任务输出仅 owner 可见：结果查询时切换为下单账户身份。
-      if (orderAddress) {
-        useIdentity(orderAddress, 'buyer')
-      }
       const outputs = await taskApi.getTaskOutputs(targetTaskId)
       const resultFile = outputs.find((item) => item.name === 'result.json')
       if (!resultFile) {
         setRuntimeResult('')
         setRuntimeResultError('未找到 result.json，请先完成任务或检查任务输出权限')
+        setStep('result', 'failed', 'result.json not found')
         return
       }
 
@@ -198,17 +232,20 @@ export default function DemoFlow() {
         setRuntimeResult(JSON.stringify(resultFile, null, 2))
       }
       appendLog('Fetch task result', true, `taskId=${targetTaskId}`)
+      setStep('result', 'done', 'Result fetched by buyer')
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       setRuntimeResult('')
       setRuntimeResultError(msg)
       appendLog('Fetch task result', false, msg)
+      setStep('result', 'failed', msg)
     } finally {
       setRuntimeResultLoading(false)
     }
   }
 
   const createOrderWallet = async () => {
+    setStep('buyer', 'running', 'Creating buyer account...')
     const res = await callAction('Create order account', () => demoApi.createWallet('manual-order'))
     const addr = res.address || ''
     if (!addr) throw new Error('order account address missing')
@@ -216,24 +253,29 @@ export default function DemoFlow() {
     useIdentity(addr, 'buyer')
     setRaw('orderWallet', res)
     appendLog('Create order account', true, addr)
+    setStep('buyer', 'done', `Buyer ready: ${addr.slice(0, 14)}...`)
     await syncBalanceForAddress('order', addr)
   }
 
   const createMinerWallet = async () => {
+    setStep('miner', 'running', 'Creating miner account...')
     const res = await callAction('Create miner account', () => demoApi.createWallet('manual-miner'))
     const addr = res.address || ''
     if (!addr) throw new Error('miner account address missing')
     setMinerAddress(addr)
     setRaw('minerWallet', res)
     appendLog('Create miner account', true, addr)
+    setStep('miner', 'done', `Miner ready: ${addr.slice(0, 14)}...`)
     await syncBalanceForAddress('miner', addr)
   }
 
   const startMiner = async () => {
     if (!minerAddress) throw new Error('please create or input miner account first')
+    setStep('start', 'running', 'Starting miner task mode...')
     const res = await callAction('Start miner task mode', () => demoApi.startMinerTaskMode(minerAddress))
     setRaw('miningStart', res)
     appendLog('Start miner task mode', true, res.message || 'started')
+    setStep('start', 'done', 'Miner is accepting tasks')
   }
 
   const uploadDockerTaskFile = async (file: File) => {
@@ -265,6 +307,19 @@ export default function DemoFlow() {
 
   const submitOrder = async () => {
     if (!orderAddress) throw new Error('please create or input order account first')
+    setStep('submit', 'running', 'Submitting order...')
+    if (form.enableEncryption) {
+      setStep('encrypt', 'running', 'Encrypting program payload...')
+      const preview = btoa(unescape(encodeURIComponent(form.program))).slice(0, 80)
+      setRaw('encryption', {
+        enabled: true,
+        algorithm: 'base64-preview-for-demo-visualization',
+        preview,
+      })
+      setStep('encrypt', 'done', 'Encryption visualization completed')
+    } else {
+      setStep('encrypt', 'todo', 'Encryption disabled')
+    }
     useIdentity(orderAddress, 'buyer')
     const res = await callAction('Submit order', () => demoApi.submitOrderManual({
       buyerAddress: orderAddress,
@@ -282,17 +337,20 @@ export default function DemoFlow() {
     setLastOrderTotalPrice(Number((res as { totalPrice?: number }).totalPrice || 0))
     setRaw('submitOrder', res)
     appendLog('Submit order', true, `orderId=${res.orderId}`)
+    setStep('submit', 'done', `Order submitted: ${res.orderId}`)
     applyDemoBalances((res as unknown as Record<string, unknown>))
     await syncBalances()
   }
 
   const acceptOrder = async () => {
     if (!orderId || !minerAddress) throw new Error('need orderId and miner account')
+    setStep('accept', 'running', 'Miner accepting order...')
     useIdentity(minerAddress, 'miner')
     const res = await callAction('Accept order', () => demoApi.acceptOrder(orderId, minerAddress))
     setTaskId(res.taskId)
     setRaw('acceptOrder', res)
     appendLog('Accept order', true, `taskId=${res.taskId}`)
+    setStep('accept', 'done', `Accepted as task: ${res.taskId}`)
     applyDemoBalances((res as unknown as Record<string, unknown>))
     await syncBalances()
   }
@@ -318,9 +376,11 @@ export default function DemoFlow() {
 
   const completeOrder = async () => {
     if (!orderId || !taskId) throw new Error('need orderId and taskId')
+    setStep('complete', 'running', 'Completing execution...')
     const res = await callAction('Complete order', () => demoApi.completeOrderManual(orderId, taskId, form.resultData))
     setRaw('completeOrder', res)
     appendLog('Complete order', true, res.status)
+    setStep('complete', 'done', 'Execution completed')
     await fetchRuntimeResult(taskId)
     await syncBalances()
   }
@@ -368,11 +428,50 @@ export default function DemoFlow() {
       orderInited: false,
       minerInited: false,
     })
+    setFlowState({
+      buyer: { status: 'todo', detail: 'Create buyer account' },
+      submit: { status: 'todo', detail: 'Submit compute order' },
+      miner: { status: 'todo', detail: 'Create miner account' },
+      start: { status: 'todo', detail: 'Start miner task mode' },
+      encrypt: { status: 'todo', detail: 'Optional encryption before submit' },
+      accept: { status: 'todo', detail: 'Accept order as miner' },
+      complete: { status: 'todo', detail: 'Complete execution' },
+      result: { status: 'todo', detail: 'Fetch result as buyer' },
+    })
   }
 
   const disabled = useMemo(() => !!busyAction, [busyAction])
   const orderDelta = balances.orderCurrent - balances.orderInitial
   const minerDelta = balances.minerCurrent - balances.minerInitial
+  const parsedRuntime = useMemo(() => {
+    if (!runtimeResult) return null
+    try {
+      return JSON.parse(runtimeResult) as Record<string, unknown>
+    } catch {
+      return null
+    }
+  }, [runtimeResult])
+
+  const parsedExecution = useMemo(() => {
+    if (!parsedRuntime) return null
+    const execution = parsedRuntime.execution
+    if (!execution || typeof execution !== 'object') return null
+    return execution as Record<string, unknown>
+  }, [parsedRuntime])
+
+  const displayResultData = useMemo(() => {
+    if (!parsedRuntime) return ''
+    const value = parsedRuntime.resultData
+    if (value === undefined || value === null) return ''
+    return typeof value === 'string' ? value : JSON.stringify(value, null, 2)
+  }, [parsedRuntime])
+
+  const displayExecutionOutput = useMemo(() => {
+    if (!parsedExecution) return ''
+    const value = parsedExecution.output
+    if (value === undefined || value === null) return ''
+    return typeof value === 'string' ? value : JSON.stringify(value, null, 2)
+  }, [parsedExecution])
 
   return (
     <div className="space-y-6">
@@ -403,6 +502,37 @@ export default function DemoFlow() {
         <div className="flex items-center gap-2">
           <button onClick={clearAll} className="btn-secondary">Clear Panel</button>
           <span className="text-xs text-console-text-muted">{busyAction ? `Running: ${busyAction}` : 'Idle'}</span>
+        </div>
+      </div>
+
+      <div className="card">
+        <h2 className="font-semibold text-console-text mb-3">Visual Flow (Click-by-Click)</h2>
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
+          {[
+            ['buyer', '1. Buyer Account'],
+            ['submit', '2. Submit Order'],
+            ['miner', '3. Miner Account'],
+            ['start', '4. Start Accepting'],
+            ['encrypt', '5. Encrypt (Optional)'],
+            ['accept', '6. Accept Order'],
+            ['complete', '7. Complete'],
+            ['result', '8. Fetch Result (Buyer Only)'],
+          ].map(([key, title]) => {
+            const node = flowState[key]
+            const color = node?.status === 'done'
+              ? 'border-green-500/40 bg-green-500/10'
+              : node?.status === 'running'
+                ? 'border-blue-500/40 bg-blue-500/10'
+                : node?.status === 'failed'
+                  ? 'border-red-500/40 bg-red-500/10'
+                  : 'border-console-border bg-console-bg'
+            return (
+              <div key={key} className={`rounded border p-2 ${color}`}>
+                <div className="text-xs font-semibold text-console-text">{title}</div>
+                <div className="text-[11px] text-console-text-muted mt-1">{node?.detail || '-'}</div>
+              </div>
+            )
+          })}
         </div>
       </div>
 
@@ -464,8 +594,15 @@ export default function DemoFlow() {
             <input type="checkbox" checked={form.freeOrder} onChange={(e) => setForm((p) => ({ ...p, freeOrder: e.target.checked }))} />
             Free order (price_per_hour=0)
           </label>
+          <label className="flex items-center gap-2 text-sm text-console-text mt-2">
+            <input type="checkbox" checked={form.enableEncryption} onChange={(e) => setForm((p) => ({ ...p, enableEncryption: e.target.checked }))} />
+            Enable encryption visualization (optional)
+          </label>
           <input className="input text-sm mt-3" value={form.dockerImage} onChange={(e) => setForm((p) => ({ ...p, dockerImage: e.target.value }))} placeholder="Docker image, e.g. python:3.11-slim" />
           <textarea className="input text-sm mt-3 min-h-[120px]" value={form.program} onChange={(e) => setForm((p) => ({ ...p, program: e.target.value }))} placeholder="Program content / startup code" />
+          <div className="text-xs text-console-text-muted mt-2">
+            Tip: set <code>result = ...</code> in your code to get accurate runtime feedback.
+          </div>
 
           <div className="mt-3 rounded border border-console-border bg-console-bg p-3">
             <div className="text-sm text-console-text mb-2">Optional: Upload Docker task file</div>
@@ -542,9 +679,38 @@ export default function DemoFlow() {
             {runtimeResultError ? (
               <div className="text-xs text-red-400 break-all">{runtimeResultError}</div>
             ) : runtimeResult ? (
-              <pre className="text-xs text-console-text overflow-auto max-h-[220px] whitespace-pre-wrap break-words">
+              <div className="space-y-3">
+                {parsedRuntime ? (
+                  <div className="grid grid-cols-1 gap-2 text-xs text-console-text">
+                    <div className="rounded border border-console-border p-2 bg-console-card">
+                      <div className="text-console-text-muted">Task</div>
+                      <div className="font-mono break-all">{String(parsedRuntime.taskId || '-')}</div>
+                    </div>
+                    <div className="rounded border border-console-border p-2 bg-console-card">
+                      <div className="text-console-text-muted">Result Data</div>
+                      <pre className="overflow-auto max-h-[140px] whitespace-pre-wrap break-words">{displayResultData || '-'}</pre>
+                    </div>
+                    <div className="rounded border border-console-border p-2 bg-console-card">
+                      <div className="text-console-text-muted">Execution Success</div>
+                      <div>{parsedExecution ? String(Boolean(parsedExecution.success)) : '-'}</div>
+                    </div>
+                    <div className="rounded border border-console-border p-2 bg-console-card">
+                      <div className="text-console-text-muted">Execution Mode</div>
+                      <div>{parsedExecution ? String(parsedExecution.executionMode || '-') : '-'}</div>
+                    </div>
+                    <div className="rounded border border-console-border p-2 bg-console-card">
+                      <div className="text-console-text-muted">Execution Output</div>
+                      <pre className="overflow-auto max-h-[140px] whitespace-pre-wrap break-words">{displayExecutionOutput || '-'}</pre>
+                    </div>
+                  </div>
+                ) : null}
+                <div>
+                  <div className="text-xs text-console-text-muted mb-1">Raw result.json</div>
+                  <pre className="text-xs text-console-text overflow-auto max-h-[220px] whitespace-pre-wrap break-words">
 {runtimeResult}
-              </pre>
+                  </pre>
+                </div>
+              </div>
             ) : (
               <div className="text-xs text-console-text-muted">No runtime result yet.</div>
             )}

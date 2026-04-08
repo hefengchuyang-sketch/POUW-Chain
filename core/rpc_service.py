@@ -5003,11 +5003,86 @@ class NodeRPCService:
         order = self.market_orders[order_id]
         linked_task_id = task_id or order.get("taskId") or f"task_{order_id}"
 
+        # 优先执行用户代码，保证“改代码 -> 结果变化”可验证。
+        program_code = ""
+        if linked_task_id in self.tasks:
+            program_code = str(self.tasks[linked_task_id].get("program") or "")
+        if not program_code:
+            program_code = str(order.get("program") or "")
+
+        execution_info = {
+            "executed": False,
+            "executionMode": "manual_fallback",
+            "success": False,
+            "error": "",
+            "output": None,
+        }
+
+        if program_code.strip():
+            try:
+                from core.sandbox_executor import SandboxExecutor
+
+                if not hasattr(self, "_demo_sandbox_executor"):
+                    self._demo_sandbox_executor = SandboxExecutor(
+                        log_fn=lambda _msg: None,
+                        force_simulate=False,
+                        file_manager=getattr(self, "_file_manager", None),
+                    )
+
+                # 预置 result，用户代码可覆盖；如果未覆盖则仍有稳定输出。
+                wrapped_code = "\n".join([
+                    "result = {'status': 'ok', 'message': 'program executed'}",
+                    "# User program starts",
+                    program_code,
+                ])
+
+                task_data_hash = hashlib.sha256(
+                    f"{linked_task_id}:{order_id}:{program_code}".encode("utf-8")
+                ).hexdigest()
+                ctx = self._demo_sandbox_executor.create_context(
+                    miner_id=order.get("minerId") or self.miner_address or f"miner_{self.node_id}",
+                    job_id=linked_task_id,
+                    task_data_hash=task_data_hash,
+                    task_code=wrapped_code,
+                    task_data={
+                        "task_id": linked_task_id,
+                        "order_id": order_id,
+                        "buyer": order.get("buyerAddress"),
+                        "miner": order.get("minerId"),
+                    },
+                )
+                sandbox_result = self._demo_sandbox_executor.execute(
+                    ctx.context_id,
+                    simulate_computation=False,
+                )
+
+                if sandbox_result:
+                    execution_info["executed"] = True
+                    execution_info["executionMode"] = "sandbox"
+                    execution_info["success"] = bool(sandbox_result.success)
+                    execution_info["error"] = sandbox_result.error_message or ""
+                    execution_info["output"] = sandbox_result.output_data
+            except Exception as e:
+                execution_info["executed"] = True
+                execution_info["executionMode"] = "sandbox_error"
+                execution_info["success"] = False
+                execution_info["error"] = str(e)
+
+        if execution_info["success"]:
+            # 使用真实执行输出
+            output = execution_info.get("output")
+            if isinstance(output, str):
+                final_result = output
+            else:
+                final_result = json.dumps(output, ensure_ascii=False)
+        else:
+            # 兜底：使用前端传入结果，保持旧流程兼容。
+            final_result = result_data or f"docker_executed_ok::{linked_task_id}"
+
         if linked_task_id in self.tasks:
             task = self.tasks[linked_task_id]
             task["status"] = "completed"
             task["progress"] = 100
-            final_result = result_data or f"docker_executed_ok::{linked_task_id}"
             final_result_hash = hashlib.sha256(final_result.encode()).hexdigest()
             task["finalResult"] = final_result
             task["outputs"] = [
@@ -5020,6 +5095,7 @@ class NodeRPCService:
                         "orderId": order_id,
                         "status": "completed",
                         "resultData": final_result,
+                        "execution": execution_info,
                         "resultHash": final_result_hash,
                         "resultLength": len(final_result),
                     }, ensure_ascii=False, indent=2),
@@ -5028,7 +5104,7 @@ class NodeRPCService:
             task["completedAt"] = datetime.datetime.now().isoformat() + "Z"
 
         order["status"] = "completed"
-        order["result"] = result_data or f"docker_executed_ok::{linked_task_id}"
+        order["result"] = final_result
         order["finishedAt"] = int(time.time() * 1000)
 
         return {
@@ -5036,6 +5112,7 @@ class NodeRPCService:
             "orderId": order_id,
             "taskId": linked_task_id,
             "result": order["result"],
+            "execution": execution_info,
             "message": "订单已完成，结果已回传下单账户",
         }
     

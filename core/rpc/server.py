@@ -133,10 +133,16 @@ class RPCHTTPHandler(BaseHTTPRequestHandler):
             self.send_error(500, "Internal server error")
 
     def _extract_auth_context(self) -> Dict:
+        requested_user = (self.headers.get('X-Auth-User', '') or '').strip()
+
         # 先尝试 API Key / Bearer Token 认证
         if self.api_auth:
             auth_context = self.api_auth.authenticate_request(self.headers)
             if auth_context.get('role') != 'guest':
+                # 已认证请求允许使用 X-Auth-User 作为调用者标识（不提升权限）
+                if requested_user:
+                    auth_context['user'] = requested_user
+                    auth_context['user_address'] = requested_user
                 return auth_context
 
         # Localhost 自动信任（可通过环境变量禁用以提升安全性）
@@ -148,11 +154,13 @@ class RPCHTTPHandler(BaseHTTPRequestHandler):
         if client_ip in ('127.0.0.1', '::1', 'localhost') and not require_local_auth:
             # 开发/测试环境：本地请求自动信任
             # 生产环境：设置 REQUIRE_LOCAL_AUTH=true 禁用自动信任
+            # 若携带 X-Auth-User，则按该用户身份执行（便于本地多角色演示）
+            effective_user = requested_user or 'local_admin'
             return {
                 'role': 'local',
-                'user': 'local_admin',
-                'user_address': 'local_admin',
-                'is_admin': True,
+                'user': effective_user,
+                'user_address': effective_user,
+                'is_admin': False if requested_user else True,
                 'is_local': True,
             }
 
@@ -174,7 +182,7 @@ class RPCHTTPHandler(BaseHTTPRequestHandler):
         if cors_origin:
             self.send_header('Access-Control-Allow-Origin', cors_origin)
         self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
-        self.send_header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-API-Key')
+        self.send_header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-API-Key, X-Auth-User')
         self.send_header('Access-Control-Max-Age', '86400')
         self.end_headers()
         self.wfile.write(json_str.encode('utf-8'))
@@ -187,7 +195,7 @@ class RPCHTTPHandler(BaseHTTPRequestHandler):
         if cors_origin:
             self.send_header('Access-Control-Allow-Origin', cors_origin)
         self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
-        self.send_header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-API-Key')
+        self.send_header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-API-Key, X-Auth-User')
         self.send_header('Access-Control-Max-Age', '86400')
         self.end_headers()
 
