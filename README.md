@@ -22,8 +22,10 @@ An innovative decentralized blockchain platform that transforms real computation
 - [Key Features](#key-features)
 - [Implemented Compensation & Protection Mechanisms](#implemented-compensation--protection-mechanisms)
 - [Implemented Capability Coverage Matrix](#implemented-capability-coverage-matrix)
+- [Documentation Hub](#documentation-hub)
 - [System Architecture](#system-architecture)
 - [Quick Start](#quick-start)
+- [Verification Checklist](#verification-checklist)
 - [Project Structure](#project-structure)
 - [Core Mechanisms](#core-mechanisms)
 - [API Documentation](#api-documentation)
@@ -303,6 +305,14 @@ For deeper verification, see `docs/CONSENSUS.md`, `docs/SECURITY_ARCHITECTURE.md
 
 ---
 
+## Documentation Hub
+
+Use the role-based docs index as entry point:
+
+- [Docs Home (Reviewer / Investor / Developer paths)](docs/README.md)
+
+---
+
 ## System Architecture
 
 ```
@@ -379,6 +389,42 @@ docker-compose up -d
 
 ---
 
+## Verification Checklist
+
+Use this checklist to quickly reproduce key capabilities during review.
+
+### A) Node and RPC Baseline
+
+- [ ] Start node: `python main.py --config config.mainnet.yaml`
+- [ ] Verify RPC method list: `rpc_listMethods`
+- [ ] Verify chain health: `chain_getInfo`, `chain_getHeight`
+
+### B) Wallet, Transfer, and Nonce Safety
+
+- [ ] Create/import wallet and query balance: `wallet_create`, `account_getBalance`
+- [ ] Send transfer and verify nonce progression: `tx_send`, `account_getNonce`
+- [ ] Confirm transaction in history: `account_getTransactions`
+
+### C) Sector Coin Exchange and MAIN Path
+
+- [ ] Read exchange rates: `sector_getExchangeRates`
+- [ ] Submit exchange request: `sector_requestExchange`
+- [ ] Validate exchange history and MAIN settlement visibility
+
+### D) Compute Task Lifecycle
+
+- [ ] Create compute task: `task_create`
+- [ ] Verify scheduling and execution status transitions
+- [ ] Confirm settlement/refund records after completion
+
+### E) Arbitration and Compensation
+
+- [ ] Trigger/inspect dispute path (arbitration period and votes)
+- [ ] Verify timeout cancel path and budget refund
+- [ ] Verify treasury compensation behavior (including deferred path)
+
+---
+
 ## Project Structure
 
 ```
@@ -450,6 +496,11 @@ def get_block_reward(sector: str) -> Tuple[float, str]:
     return SECTOR_BASE_REWARDS.get(sector, (0, sector))
 ```
 
+Evidence links:
+
+- Code: `core/sector_coin.py` (`get_block_reward`, MAIN returns `0.0`)
+- API example: `sector_getExchangeRates`, `sector_requestExchange`, `account_getBalance`
+
 ### 2. Dual-Witness Mechanism (DR-5/DR-6)
 
 All MAIN-related operations require multi-sector confirmation:
@@ -461,6 +512,11 @@ class MainTransferEngine:
     LARGE_TRANSFER_WITNESSES = 3  # Large transfers (≥1000) need 3 witnesses
     WITNESS_TIMEOUT = 60        # 60-second timeout
 ```
+
+Evidence links:
+
+- Code: `core/main_transfer.py` (`MIN_WITNESSES`, `LARGE_TRANSFER_WITNESSES`)
+- API example: `tx_send`, `account_getTransactions`
 
 ### 3. Sector Coin Exchange (DR-9)
 
@@ -479,6 +535,11 @@ def execute_exchange(request):
     main_ledger.mint(request.to_address, main_amount)
 ```
 
+Evidence links:
+
+- Code: `core/dual_witness_exchange.py`, `core/sector_coin.py`
+- API example: `sector_requestExchange`, `sector_getExchangeHistory`, `sector_cancelExchange`
+
 ### 4. Double-Spend Prevention (Nonce)
 
 Each account maintains an incrementing nonce:
@@ -493,6 +554,11 @@ class AccountNonceManager:
         return True, "OK"
 ```
 
+Evidence links:
+
+- Code: `core/utxo_store.py` (nonce retrieval/updates), `core/transaction.py`
+- API example: `account_getNonce`, `tx_send`
+
 ### 5. Fee Distribution
 
 1% transaction fee distributed in a decentralized manner:
@@ -502,6 +568,11 @@ class AccountNonceManager:
 | 0.5% | Burn | `BURN_ADDRESS` |
 | 0.3% | Miner | Block-producing miner address |
 | 0.2% | Foundation | Multi-sig address |
+
+Evidence links:
+
+- Code: `core/fee_config.py`, `core/protocol_fee_pool.py`, `core/revenue_tracking.py`
+- API example: `chain_getInfo`, `account_getBalance`
 
 ### 6. Hybrid Consensus Policy
 
@@ -519,6 +590,11 @@ consensus:
     sbox_ratio: 0.65
     sbox_enabled: true
 ```
+
+Evidence links:
+
+- Code: `core/consensus.py` (`consensus_mode`, `consensus_sbox_ratio`)
+- API example: `chain_getInfo` (`consensusMode`, `consensusSboxRatio`, distribution fields)
 
 ---
 
