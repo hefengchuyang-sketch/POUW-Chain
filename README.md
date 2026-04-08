@@ -13,11 +13,14 @@ An innovative decentralized blockchain platform that transforms real computation
 ## Table of Contents
 
 - [Project Thesis](#project-thesis)
+- [Privacy-First Compute Bank Thesis](#privacy-first-compute-bank-thesis)
+- [Founder Context](#founder-context)
 - [Current Stage & Validation Needs](#current-stage--validation-needs)
 - [Business Model](#business-model)
 - [Why This Matters for Human Progress](#why-this-matters-for-human-progress)
 - [Key Features](#key-features)
 - [Implemented Compensation & Protection Mechanisms](#implemented-compensation--protection-mechanisms)
+- [Implemented Capability Coverage Matrix](#implemented-capability-coverage-matrix)
 - [System Architecture](#system-architecture)
 - [Quick Start](#quick-start)
 - [Project Structure](#project-structure)
@@ -41,6 +44,47 @@ Core claims:
 - Useful work should secure the chain, not waste energy on meaningless hashes.
 - Compute markets need verification and dispute resolution, not only matching and pricing.
 - Economic incentives must be transparent and governable from day one.
+
+---
+
+## Privacy-First Compute Bank Thesis
+
+POUW-Chain treats privacy and capacity as first-class protocol concerns.
+
+### Data Privacy Problem
+
+In AI research, people often rent external GPUs because they have no local cards. That creates a practical risk: sensitive datasets and intermediate artifacts may leak across untrusted infrastructure.
+
+POUW-Chain addresses this with layered protections:
+
+- End-to-end encrypted task data channels
+- Optional S-Box-enhanced transport path
+- Explicit dispute and audit trails for delivery integrity
+- Multi-level compute security roadmap (standard/enhanced/confidential)
+
+### Compute Bank Attribute
+
+Small companies and labs frequently hold idle GPU capacity that turns into sunk cost.
+
+POUW-Chain positions this idle capacity as a **compute bank**:
+
+- Idle cards can be deposited as productive supply
+- Demand-side users access verifiable compute without owning expensive hardware
+- On-chain economics route value between users, miners, and treasury transparently
+
+This is not only a marketplace; it is a mechanism for turning idle hardware into a trustable financial-technical utility.
+
+---
+
+## Founder Context
+
+This project is driven by a practical founder-level pain point from AI research:
+
+- I need to run real workloads but often do not have enough local GPU capacity.
+- Renting third-party compute is convenient but raises data leakage and accountability concerns.
+- At the same time, many small teams own underutilized cards that still incur fixed cost.
+
+POUW-Chain is built to close this gap: verifiable access for demand-side researchers, and measurable utilization for supply-side small operators.
 
 ---
 
@@ -206,6 +250,25 @@ This section highlights mechanisms that are already implemented in code but were
 
 - Fault compensation and multi-layer fuse rules are documented and aligned with task/treasury/arbitration flows.
 - Documentation reference: `docs/FUSE_MECHANISM.md`
+
+---
+
+## Implemented Capability Coverage Matrix
+
+To make implementation scope auditable for reviewers, below is a capability-level map of modules already present in the repository.
+
+| Capability Domain | Representative Implemented Modules |
+|---|---|
+| Consensus & Chain | `core/consensus.py`, `core/unified_consensus.py`, `core/sbox_miner.py`, `core/pouw_scoring.py` |
+| Compute Market & Pricing | `core/compute_scheduler.py`, `core/dynamic_pricing.py`, `core/compute_market_orderbook.py`, `core/compute_economy.py` |
+| Privacy & Security | `core/e2e_encryption.py`, `core/sbox_crypto.py`, `core/security.py`, `core/attack_prevention.py`, `core/miner_security_manager.py` |
+| Task Lifecycle & Acceptance | `core/encrypted_task.py`, `core/task_acceptance.py`, `core/rpc_service.py`, `core/sandbox_executor.py` |
+| Arbitration & Compensation | `core/arbitration.py`, `core/compute_economy.py`, `core/protocol_fee_pool.py`, `core/dao_treasury.py` |
+| Treasury & Governance | `core/dao_treasury.py`, `core/contribution_governance.py`, `core/governance_enhanced.py`, `core/treasury_manager.py` |
+| Network & Data Transport | `core/message_queue.py`, `core/p2p_data_tunnel.py`, `core/p2p_task_distributor.py`, `core/tcp_network.py` |
+| Wallet & Settlement | `core/wallet.py`, `core/main_transfer.py`, `core/dual_witness_exchange.py`, `core/utxo_store.py` |
+
+For deeper verification, see `docs/CONSENSUS.md`, `docs/SECURITY_ARCHITECTURE.md`, `docs/CONTRACT_SYSTEM.md`, and `docs/API.md`.
 
 ---
 
