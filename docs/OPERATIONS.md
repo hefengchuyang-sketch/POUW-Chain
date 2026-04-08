@@ -28,8 +28,8 @@
 
 ```bash
 # Clone the project
-git clone https://github.com/your-org/maincoin.git
-cd maincoin
+git clone https://github.com/hefengchuyang-sketch/POUW-Chain.git
+cd POUW-Chain
 
 # Create virtual environment (recommended)
 python -m venv venv

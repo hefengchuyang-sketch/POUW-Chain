@@ -90,8 +90,8 @@ Benefits: Miners have no incentive to cheat (they don't know which task is paid)
 
 ```bash
 # Download the code
-git clone https://github.com/pouwchain/maincoin.git
-cd maincoin
+git clone https://github.com/hefengchuyang-sketch/POUW-Chain.git
+cd POUW-Chain
 
 # Install dependencies
 pip install -r requirements.txt

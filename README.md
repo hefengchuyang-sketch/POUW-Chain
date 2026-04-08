@@ -276,7 +276,7 @@ For deeper verification, see `docs/CONSENSUS.md`, `docs/SECURITY_ARCHITECTURE.md
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                      POUW Chain                              │
+│                     POUW-Chain                               │
 ├─────────────┬─────────────┬─────────────┬─────────────┬─────┤
 │   H100      │    A100     │  RTX4090    │  RTX4080    │ ... │
 │   Sector    │   Sector    │   Sector    │   Sector    │     │
@@ -363,17 +363,16 @@ POUW-Chain/
 ├── core/                    # Core modules
 │   ├── consensus.py         #   Consensus mechanism (POUW + S-Box PoUW)
 │   ├── unified_consensus.py #   Unified consensus engine
-│   ├── pouw.py              #   POUW task types & verification
+│   ├── pouw_executor.py     #   POUW task execution
+│   ├── pouw_block_types.py  #   POUW block typing
 │   ├── pouw_scoring.py      #   POUW scoring system
 │   ├── sbox_engine.py       #   S-Box evaluation & genetic optimization
 │   ├── sbox_miner.py        #   Multi-sector S-Box mining & VRF
 │   ├── sbox_crypto.py       #   S-Box encryption layers (STANDARD/ENHANCED/MAXIMUM)
-│   ├── blockchain.py        #   Blockchain main logic
-│   ├── block.py             #   Block data structure
 │   ├── transaction.py       #   Transaction management
+│   ├── sector_coin.py       #   Sector coin ledger + registry
 │   ├── main_transfer.py     #   MAIN transfer + dual witness
 │   ├── dual_witness_exchange.py  # Sector coin exchange
-│   ├── sector_coin.py       #   Sector coin ledger + registry
 │   ├── dao_treasury.py      #   DAO governance + treasury
 │   ├── fee_config.py        #   Fee configuration (immutable)
 │   ├── protocol_fee_pool.py #   Protocol fee pool
@@ -385,7 +384,8 @@ POUW-Chain/
 │   ├── security.py          #   Security infrastructure
 │   ├── crypto.py            #   Cryptographic utilities
 │   ├── wallet.py            #   Wallet management
-│   ├── network.py           #   P2P network
+│   ├── message_queue.py     #   P2P messaging queue
+│   ├── tcp_network.py       #   TLS P2P transport
 │   └── ...                  #   And 60+ other modules
 ├── tests/                   # Test suite (202 tests)
 ├── docs/                    # Documentation
