@@ -1,10 +1,10 @@
-# POUW Chain
+# POUW-Chain
 
 **Proof of Useful Work — Multi-Sector Heterogeneous Computing Blockchain**
 
 An innovative decentralized blockchain platform that transforms real computation tasks (AI inference, video rendering, scientific computing) into a consensus mechanism.
 
-[![Version](https://img.shields.io/badge/version-2.0.0-blue.svg)](https://github.com/pouwchain/maincoin)
+[![Version](https://img.shields.io/badge/version-2.0.0-blue.svg)](https://github.com/hefengchuyang-sketch/POUW-Chain)
 [![Python](https://img.shields.io/badge/python-3.9+-green.svg)](https://python.org)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
@@ -12,6 +12,10 @@ An innovative decentralized blockchain platform that transforms real computation
 
 ## Table of Contents
 
+- [Project Thesis](#project-thesis)
+- [Current Stage & Validation Needs](#current-stage--validation-needs)
+- [Business Model](#business-model)
+- [Why This Matters for Human Progress](#why-this-matters-for-human-progress)
 - [Key Features](#key-features)
 - [System Architecture](#system-architecture)
 - [Quick Start](#quick-start)
@@ -20,6 +24,73 @@ An innovative decentralized blockchain platform that transforms real computation
 - [API Documentation](#api-documentation)
 - [Development Guide](#development-guide)
 - [License](#license)
+
+---
+
+## Project Thesis
+
+POUW-Chain is built on a simple thesis:
+
+> Global compute is abundant but fragmented, while small teams with meaningful problems cannot access reliable and verifiable compute delivery.
+
+Inspired by early Ethereum-style application narratives, this project is not only a technical prototype. It is a protocol-level attempt to turn compute from an opaque service into a transparent, verifiable, and economically coordinated public utility.
+
+Core claims:
+
+- Useful work should secure the chain, not waste energy on meaningless hashes.
+- Compute markets need verification and dispute resolution, not only matching and pricing.
+- Economic incentives must be transparent and governable from day one.
+
+---
+
+## Current Stage & Validation Needs
+
+### R&D Stage: Early-Formed, Pre-Scale Validation
+
+The core protocol and end-to-end demo flow are implemented:
+
+- Order submission -> miner execution -> result return -> settlement visualization
+- Sector-based mining and hybrid consensus policies
+- Security controls (multi-witness, nonce, encrypted channels)
+
+The project is now in a critical phase: real-world validation and debug convergence, not feature inflation.
+
+### What We Need Next
+
+- 2-3 real customer workload scenarios (anonymous acceptable)
+- GPU/CPU heterogeneous hardware environments for tuning and fault injection
+- Continuous observation windows to measure SLA, fulfillment quality, and dispute rate
+
+This phase is where protocol assumptions meet production reality.
+
+---
+
+## Business Model
+
+POUW-Chain is designed as a verifiable compute marketplace with layered monetization:
+
+- Platform take-rate charged by task or compute-time usage
+- Premium verification layer for enterprise-grade auditability and risk controls
+- Governance + treasury flywheel that improves pricing and scheduling policies over time
+
+Long-term value comes from reducing trust costs in distributed compute transactions.
+
+---
+
+## Why This Matters for Human Progress
+
+This project targets a structural bottleneck:
+
+- Small companies and independent labs often have strong ideas but insufficient compute access.
+- Existing compute markets optimize speed and price, but underinvest in verifiability and accountability.
+
+POUW-Chain aims to make compute:
+
+- Accessible: organize fragmented resources into usable capacity
+- Trustable: prove delivery quality instead of relying on opaque vendor promises
+- Meaningful: direct compute toward scientific, engineering, and public-value workloads
+
+In short, this is an attempt to make compute economically useful and socially meaningful at the same time.
 
 ---
 
@@ -130,8 +201,8 @@ Mining → S-Box Generation + POUW Task → Sector Coin Reward → Dual-Witness 
 
 ```bash
 # Clone the repository
-git clone https://github.com/pouwchain/maincoin.git
-cd maincoin
+git clone https://github.com/hefengchuyang-sketch/POUW-Chain.git
+cd POUW-Chain
 
 # Install dependencies
 pip install -r requirements.txt
@@ -167,7 +238,7 @@ docker-compose up -d
 ## Project Structure
 
 ```
-maincoin/
+POUW-Chain/
 ├── main.py                  # Node entry point
 ├── config.yaml              # Default/dev configuration
 ├── config.mainnet.yaml      # Mainnet production config
@@ -412,7 +483,7 @@ python -m pytest tests/ --tb=short
 
 ## Competitive Landscape
 
-| Dimension | **POUW Chain** | Bitcoin | Ethereum (PoS) | Filecoin | Golem/Render |
+| Dimension | **POUW-Chain** | Bitcoin | Ethereum (PoS) | Filecoin | Golem/Render |
 |-----------|---------------|---------|----------------|----------|--------------|
 | Consensus work is useful? | **Yes** (S-Box + compute) | No | N/A (staking) | Partial (storage) | No own chain |
 | Cryptographic output? | **Yes** (S-Box primitives) | No | No | No | No |
@@ -429,13 +500,13 @@ python -m pytest tests/ --tb=short
 
 MIT License
 
-Copyright (c) 2026 POUW Chain
+Copyright (c) 2026 POUW-Chain
 
 ---
 
 ## Contact
 
-- GitHub Issues: [Submit an issue](https://github.com/hefengchuyang-sketch/maincoin/issues/new/choose)
+- GitHub Issues: [Submit an issue](https://github.com/hefengchuyang-sketch/POUW-Chain/issues/new/choose)
 - Email: yuhanliu050128@gmail.com
 
 ---
