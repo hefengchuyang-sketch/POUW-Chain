@@ -318,6 +318,14 @@ Security regression quick check:
 python -m pytest tests/test_security_regression_access.py -q
 ```
 
+Reviewer evidence reports:
+
+- [Reviewer Evidence Summary](docs/reports/REVIEWER_EVIDENCE_SUMMARY.md)
+- [Public Dataset Validation (Iris)](docs/reports/public_dataset_validation_iris.md)
+- [Public Dataset Validation (Digits)](docs/reports/public_dataset_validation_digits.md)
+- [Adversarial Access Control Report](docs/reports/adversarial_access_report.md)
+- [Large Chunk Integrity Report](docs/reports/large_chunk_integrity_report.md)
+
 ---
 
 ## System Architecture

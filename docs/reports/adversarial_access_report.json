@@ -1,0 +1,27 @@
+{
+  "generatedAt": "2026-04-08T13:14:16Z",
+  "rounds": 20,
+  "sampleIds": {
+    "uploadId": "b1de5d96915c492b",
+    "fileRef": "dfe8b6356f514f82",
+    "orderId": "order_85e14632",
+    "taskId": "task_order_85e14632"
+  },
+  "results": {
+    "nonOwnerUploadSessionDenied": 20,
+    "nonOwnerFileInfoDenied": 20,
+    "nonOwnerFileDownloadDenied": 20,
+    "nonOwnerTaskOutputDenied": 20,
+    "malformedFileRefRejected": 20,
+    "adminCrossOwnerAllowed": 20,
+    "totalChecks": 120
+  },
+  "metrics": {
+    "nonOwnerUploadSessionDeniedRate": 100.0,
+    "nonOwnerFileInfoDeniedRate": 100.0,
+    "nonOwnerFileDownloadDeniedRate": 100.0,
+    "nonOwnerTaskOutputDeniedRate": 100.0,
+    "malformedFileRefRejectedRate": 100.0,
+    "adminCrossOwnerAllowedRate": 100.0
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "generatedAt": "2026-04-08T13:23:56Z",
+  "results": {
+    "multiChunkUploadSuccess": 6,
+    "integrityVerified": 6,
+    "ownerOnlyDownloadEnforced": 6,
+    "invalidChunkRejected": 6,
+    "malformedFileRefRejected": 6,
+    "totalChecks": 30
+  },
+  "metrics": {
+    "rounds": 6,
+    "payloadSizeBytes": 9437307,
+    "chunkSizeBytes": 4194304,
+    "expectedChunks": 3,
+    "multiChunkUploadSuccessRate": 100.0,
+    "integrityVerifiedRate": 100.0,
+    "ownerOnlyDownloadEnforcedRate": 100.0,
+    "invalidChunkRejectedRate": 100.0,
+    "malformedFileRefRejectedRate": 100.0,
+    "avgUploadMs": 56.691,
+    "p95UploadMs": 60.315,
+    "avgVerifyMs": 46.567,
+    "p95VerifyMs": 53.908
+  },
+  "sampleIds": {
+    "uploadId": "90492aaba0e8498c",
+    "fileRef": "ce9f4471d461495a",
+    "chunkCount": 3,
+    "payloadSizeBytes": 9437307
+  }
+}

@@ -1,0 +1,228 @@
+{
+  "generatedAt": "2026-04-08T13:10:57Z",
+  "command": "python scripts/generate_public_dataset_report.py --dataset digits --runs 10 --warmup 1",
+  "warmupRuns": 1,
+  "dataset": {
+    "name": "Digits",
+    "rows": 1797,
+    "features": 64,
+    "checksumSha256": "846b206f522e9f19d47f5c7fab441cb3b15ce4e9778ff0193ef5796b4616f7cf",
+    "sizeBytes": 496907
+  },
+  "metrics": {
+    "runs": 10,
+    "successRuns": 10,
+    "successRate": 100.0,
+    "ownerFileEnforcementRate": 100.0,
+    "ownerResultEnforcementRate": 100.0,
+    "avgTotalMs": 6.692,
+    "medianTotalMs": 6.223,
+    "p95TotalMs": 9.152,
+    "maxTotalMs": 9.152,
+    "avgUploadMs": 6.429,
+    "avgSubmitMs": 0.054,
+    "avgAcceptMs": 0.018,
+    "avgCompleteMs": 0.071,
+    "avgOutputFetchMs": 0.071
+  },
+  "sample": {
+    "iteration": 1,
+    "ok": true,
+    "orderId": "order_5d29e595",
+    "taskId": "task_order_5d29e595",
+    "fileRef": "25aaf677061d49b9",
+    "ownerOnlyFileInfoEnforced": true,
+    "ownerOnlyResultEnforced": true,
+    "phaseMs": {
+      "upload": 6.089,
+      "submit": 0.048,
+      "accept": 0.016,
+      "complete": 0.06,
+      "output_fetch": 0.064
+    },
+    "totalMs": 6.319,
+    "error": ""
+  },
+  "runsDetail": [
+    {
+      "iteration": 1,
+      "ok": true,
+      "orderId": "order_5d29e595",
+      "taskId": "task_order_5d29e595",
+      "fileRef": "25aaf677061d49b9",
+      "ownerOnlyFileInfoEnforced": true,
+      "ownerOnlyResultEnforced": true,
+      "phaseMs": {
+        "upload": 6.089,
+        "submit": 0.048,
+        "accept": 0.016,
+        "complete": 0.06,
+        "output_fetch": 0.064
+      },
+      "totalMs": 6.319,
+      "error": ""
+    },
+    {
+      "iteration": 2,
+      "ok": true,
+      "orderId": "order_a4a73911",
+      "taskId": "task_order_a4a73911",
+      "fileRef": "c04ed36beb1a4191",
+      "ownerOnlyFileInfoEnforced": true,
+      "ownerOnlyResultEnforced": true,
+      "phaseMs": {
+        "upload": 5.503,
+        "submit": 0.051,
+        "accept": 0.019,
+        "complete": 0.062,
+        "output_fetch": 0.07
+      },
+      "totalMs": 5.749,
+      "error": ""
+    },
+    {
+      "iteration": 3,
+      "ok": true,
+      "orderId": "order_4b7a76c7",
+      "taskId": "task_order_4b7a76c7",
+      "fileRef": "4c8c83667d1a4153",
+      "ownerOnlyFileInfoEnforced": true,
+      "ownerOnlyResultEnforced": true,
+      "phaseMs": {
+        "upload": 5.435,
+        "submit": 0.047,
+        "accept": 0.015,
+        "complete": 0.059,
+        "output_fetch": 0.061
+      },
+      "totalMs": 5.657,
+      "error": ""
+    },
+    {
+      "iteration": 4,
+      "ok": true,
+      "orderId": "order_fd9bd3c9",
+      "taskId": "task_order_fd9bd3c9",
+      "fileRef": "b50c8088e2174f78",
+      "ownerOnlyFileInfoEnforced": true,
+      "ownerOnlyResultEnforced": true,
+      "phaseMs": {
+        "upload": 5.199,
+        "submit": 0.045,
+        "accept": 0.014,
+        "complete": 0.056,
+        "output_fetch": 0.056
+      },
+      "totalMs": 5.407,
+      "error": ""
+    },
+    {
+      "iteration": 5,
+      "ok": true,
+      "orderId": "order_4f7dd556",
+      "taskId": "task_order_4f7dd556",
+      "fileRef": "a296fa6405d44e79",
+      "ownerOnlyFileInfoEnforced": true,
+      "ownerOnlyResultEnforced": true,
+      "phaseMs": {
+        "upload": 5.702,
+        "submit": 0.049,
+        "accept": 0.015,
+        "complete": 0.103,
+        "output_fetch": 0.067
+      },
+      "totalMs": 5.979,
+      "error": ""
+    },
+    {
+      "iteration": 6,
+      "ok": true,
+      "orderId": "order_b863ffa2",
+      "taskId": "task_order_b863ffa2",
+      "fileRef": "a60720cf62224915",
+      "ownerOnlyFileInfoEnforced": true,
+      "ownerOnlyResultEnforced": true,
+      "phaseMs": {
+        "upload": 6.906,
+        "submit": 0.053,
+        "accept": 0.017,
+        "complete": 0.067,
+        "output_fetch": 0.06
+      },
+      "totalMs": 7.149,
+      "error": ""
+    },
+    {
+      "iteration": 7,
+      "ok": true,
+      "orderId": "order_bda64b1a",
+      "taskId": "task_order_bda64b1a",
+      "fileRef": "026fa986e1b44c69",
+      "ownerOnlyFileInfoEnforced": true,
+      "ownerOnlyResultEnforced": true,
+      "phaseMs": {
+        "upload": 7.183,
+        "submit": 0.059,
+        "accept": 0.022,
+        "complete": 0.071,
+        "output_fetch": 0.06
+      },
+      "totalMs": 7.448,
+      "error": ""
+    },
+    {
+      "iteration": 8,
+      "ok": true,
+      "orderId": "order_7d77cf59",
+      "taskId": "task_order_7d77cf59",
+      "fileRef": "2c8b13688c504d2c",
+      "ownerOnlyFileInfoEnforced": true,
+      "ownerOnlyResultEnforced": true,
+      "phaseMs": {
+        "upload": 5.834,
+        "submit": 0.057,
+        "accept": 0.018,
+        "complete": 0.07,
+        "output_fetch": 0.098
+      },
+      "totalMs": 6.127,
+      "error": ""
+    },
+    {
+      "iteration": 9,
+      "ok": true,
+      "orderId": "order_a424fc1c",
+      "taskId": "task_order_a424fc1c",
+      "fileRef": "f7547821bd974ba7",
+      "ownerOnlyFileInfoEnforced": true,
+      "ownerOnlyResultEnforced": true,
+      "phaseMs": {
+        "upload": 8.838,
+        "submit": 0.065,
+        "accept": 0.019,
+        "complete": 0.083,
+        "output_fetch": 0.085
+      },
+      "totalMs": 9.152,
+      "error": ""
+    },
+    {
+      "iteration": 10,
+      "ok": true,
+      "orderId": "order_796a479e",
+      "taskId": "task_order_796a479e",
+      "fileRef": "85f249007639418d",
+      "ownerOnlyFileInfoEnforced": true,
+      "ownerOnlyResultEnforced": true,
+      "phaseMs": {
+        "upload": 7.6,
+        "submit": 0.067,
+        "accept": 0.021,
+        "complete": 0.082,
+        "output_fetch": 0.092
+      },
+      "totalMs": 7.93,
+      "error": ""
+    }
+  ]
+}
