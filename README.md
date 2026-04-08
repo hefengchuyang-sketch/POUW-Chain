@@ -17,6 +17,7 @@ An innovative decentralized blockchain platform that transforms real computation
 - [Business Model](#business-model)
 - [Why This Matters for Human Progress](#why-this-matters-for-human-progress)
 - [Key Features](#key-features)
+- [Implemented Compensation & Protection Mechanisms](#implemented-compensation--protection-mechanisms)
 - [System Architecture](#system-architecture)
 - [Quick Start](#quick-start)
 - [Project Structure](#project-structure)
@@ -156,6 +157,55 @@ In short, this is an attempt to make compute economically useful and socially me
 ### 🏦 Block Reward Distribution
 - 97% to block-producing miner
 - 3% auto-transferred to DAO treasury (MAIN_TREASURY)
+
+---
+
+## Implemented Compensation & Protection Mechanisms
+
+This section highlights mechanisms that are already implemented in code but were previously easy to miss in high-level descriptions.
+
+### 1) Upload Timeout Auto-Cancel + Treasury Compensation (Implemented)
+
+- If encrypted-task upload stays in `CREATED` status beyond timeout, a watchdog auto-cancels the task.
+- User locked budget is refunded automatically.
+- If miner has already received data, miner receives treasury bandwidth compensation.
+- Parameters currently implemented:
+    - Upload timeout: `2 hours` (`UPLOAD_TIMEOUT_SECONDS = 2 * 3600`)
+    - Compensation baseline: `0.5 MAIN / GB` (`UPLOAD_COMPENSATION_PER_GB = 0.5`)
+    - Minimum compensation floor: `0.01 MAIN`
+    - Treasury insufficient-balance path: deferred debt record, auto-paid later when treasury refills
+- Code reference: `core/rpc_service.py` (`_handle_upload_timeouts`, `_cancel_upload_timeout_task`, `UPLOAD_*` constants)
+
+### 2) Arbitration Staking + Penalty Distribution (Implemented)
+
+- Both renter and miner stake before arbitration period starts.
+- Voting requires minimum validator participation and threshold majority.
+- Penalty and reward ratios are explicit and enforced:
+    - `STAKE_RATIO = 5%`
+    - `PENALTY_RATIO = 50%` of losing-side stake to winner
+    - `VALIDATOR_REWARD_RATIO = 5%`
+    - Remaining share routed to treasury
+- Code reference: `core/arbitration.py`
+
+### 3) Contract Default Compensation (Implemented)
+
+- On compute-contract default, defaulting side margin is penalized.
+- Counterparty compensation is automatically computed from penalty.
+- Current implemented policy:
+    - `penalty_rate` default: `0.2`
+    - compensation to counterparty: `80%` of penalty
+- Code reference: `core/compute_economy.py` (`handle_default`)
+
+### 4) Budget Lock + Overpayment Refund (Implemented)
+
+- Budget is locked conservatively at worst-case estimate to guarantee task completion.
+- After settlement, excess locked amount is automatically refunded.
+- Documentation reference: `docs/USER_GUIDE.md`
+
+### 5) FUSE Fault Compensation Framework (Documented + Integrated Interfaces)
+
+- Fault compensation and multi-layer fuse rules are documented and aligned with task/treasury/arbitration flows.
+- Documentation reference: `docs/FUSE_MECHANISM.md`
 
 ---
 
@@ -478,6 +528,7 @@ python -m pytest tests/ --tb=short
 - [Operations Manual](docs/OPERATIONS.md) — Deployment & operations guide
 - [Dynamic Pricing](docs/DYNAMIC_PRICING_IMPLEMENTATION.md) — Compute market pricing
 - [Security Audit](docs/SECURITY_AUDIT.md) — Security vulnerability fix records
+- [FUSE Mechanism](docs/FUSE_MECHANISM.md) — Fault handling and compensation rules
 
 ---
 
