@@ -878,11 +878,7 @@ export const taskApi = {
   
   // Translated comment
   getTaskOutputs: async (taskId: string): Promise<TaskOutputFile[]> => {
-    try {
-      return await rpcCall<TaskOutputFile[]>('task_getOutputs', { task_id: taskId })
-    } catch {
-      return []
-    }
+    return await rpcCall<TaskOutputFile[]>('task_getOutputs', { task_id: taskId })
   },
   
   // Translated comment
@@ -1108,13 +1104,21 @@ export const fileTransferApi = {
 
       // Translated comment
       onProgress?.({ phase: 'finalizing', percent: 99, uploadedBytes: totalSize, totalBytes: totalSize })
-      const finalResult = await rpcCall<{ fileId: string; verified: boolean }>('file_finalizeUpload', {
+      const finalResult = await rpcCall<{ fileRef?: string; fileId?: string; verified?: boolean }>('file_finalizeUpload', {
         uploadId,
       })
-      if (!finalResult || !finalResult.verified) throw new Error('File verification failed')
+      if (!finalResult) throw new Error('File finalization failed')
+
+      const resolvedFileRef = finalResult.fileRef || finalResult.fileId
+      if (!resolvedFileRef) throw new Error('Missing file reference in finalize response')
+
+      // verified 字段在部分后端版本中不存在；缺省时以 finalize 成功视为通过。
+      if (typeof finalResult.verified === 'boolean' && !finalResult.verified) {
+        throw new Error('File verification failed')
+      }
 
       onProgress?.({ phase: 'done', percent: 100, uploadedBytes: totalSize, totalBytes: totalSize })
-      return finalResult.fileId
+      return resolvedFileRef
     } catch (e) {
       console.error('Chunked upload failed:', e)
       return null

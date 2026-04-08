@@ -18,6 +18,7 @@ import re
 import datetime
 import mimetypes
 from dataclasses import dataclass, field
+import inspect
 from typing import Dict, List, Optional, Any, Callable, Tuple
 from enum import Enum
 import threading
@@ -1977,6 +1978,21 @@ class NodeRPCService:
                         except (ValueError, AttributeError):
                             pass
                 params = normalized
+
+                # 将认证上下文注入到支持该参数的处理器，避免未授权数据访问
+                try:
+                    sig = inspect.signature(handler)
+                    supports_auth_context = (
+                        "auth_context" in sig.parameters
+                        or any(
+                            p.kind == inspect.Parameter.VAR_KEYWORD
+                            for p in sig.parameters.values()
+                        )
+                    )
+                    if supports_auth_context:
+                        params["auth_context"] = auth_context
+                except (TypeError, ValueError):
+                    pass
             
             # 先尝试用 **kwargs 调用，失败则用位置参
             try:
@@ -5003,6 +5019,7 @@ class NodeRPCService:
                         "taskId": linked_task_id,
                         "orderId": order_id,
                         "status": "completed",
+                        "resultData": final_result,
                         "resultHash": final_result_hash,
                         "resultLength": len(final_result),
                     }, ensure_ascii=False, indent=2),
@@ -5933,6 +5950,8 @@ class NodeRPCService:
     
     def _file_get_task_outputs(self, taskId: str, **kwargs) -> Dict:
         """获取任务输出文件清单（含模型文件）。"""
+        auth_context = kwargs.get("auth_context", {})
+        self._ensure_task_output_access(taskId, auth_context)
         manifest = self._file_manager.get_task_output_manifest(taskId)
         if not manifest:
             raise RPCError(RPCErrorCode.INVALID_PARAMS.value, f"任务输出不存在: {taskId}")
@@ -5947,6 +5966,8 @@ class NodeRPCService:
         **kwargs
     ) -> Dict:
         """分块下载任务输出文件（如训练好的模型权重）。"""
+        auth_context = kwargs.get("auth_context", {})
+        self._ensure_task_output_access(taskId, auth_context)
         self._check_file_rate("download_chunk")
         return self._file_manager.download_task_output_chunk(
             task_id=taskId,
@@ -7233,6 +7254,31 @@ class NodeRPCService:
         }
     
     # ============== 任务方法实现 ==============
+
+    def _ensure_task_output_access(self, task_id: str, auth_context: Dict) -> Dict:
+        """校验任务输出访问权限：仅任务创建者或管理员可查看。"""
+        task = self.tasks.get(task_id)
+        if not task:
+            raise RPCError(RPCErrorCode.INVALID_PARAMS.value, f"任务不存在: {task_id}")
+
+        caller = self._get_auth_user(auth_context, self.miner_address or "anonymous")
+        owner = task.get("buyerId") or task.get("owner") or task.get("creatorId")
+        is_admin = bool(auth_context.get("is_admin", False))
+
+        if owner and caller != owner and not is_admin:
+            raise RPCError(-32403, "Permission denied: only task owner can access outputs")
+
+        return task
+
+    @staticmethod
+    def _format_size_label(size_bytes: int) -> str:
+        if size_bytes < 1024:
+            return f"{size_bytes} B"
+        if size_bytes < 1024 ** 2:
+            return f"{size_bytes / 1024:.1f} KB"
+        if size_bytes < 1024 ** 3:
+            return f"{size_bytes / (1024 ** 2):.1f} MB"
+        return f"{size_bytes / (1024 ** 3):.1f} GB"
     
     def _task_get_list(self, status: str = None, task_type: str = None, limit: int = 20, **kwargs) -> Dict:
         """获取任务列表 - 从真实存储读取"""
@@ -7269,6 +7315,9 @@ class NodeRPCService:
         import datetime
         task_id = f"task_{uuid.uuid4().hex[:8]}"
         
+        auth_context = kwargs.get("auth_context", {})
+        buyer_id = self._get_auth_user(auth_context, self.miner_address or "buyer_local")
+
         task = {
             "taskId": task_id,
             "title": title,
@@ -7283,7 +7332,7 @@ class NodeRPCService:
             "estimatedHours": estimated_hours,
             "progress": 0,
             "createdAt": datetime.datetime.now().isoformat() + "Z",
-            "buyerId": self.miner_address or "buyer_local",
+            "buyerId": buyer_id,
         }
 
         # 保存 requirements（矿工执行时会在构建阶段安装依赖）
@@ -7299,7 +7348,7 @@ class NodeRPCService:
                 compute_task = ComputeTask(
                     task_id=task_id,
                     order_id=task_id,
-                    buyer_address=self.miner_address or "buyer_local",
+                    buyer_address=buyer_id,
                     task_type=task_type,
                     task_data=json.dumps({"title": title, "description": description,
                                           "gpu_type": gpu_type, "gpu_count": gpu_count}),
@@ -7503,10 +7552,51 @@ class NodeRPCService:
         """获取任务输出文件"""
         # 兼容两种参数
         tid = task_id or taskId
-        if not tid or tid not in self.tasks:
+        if not tid:
             return []
-        
-        task = self.tasks[tid]
+
+        auth_context = kwargs.get("auth_context", {})
+        task = self._ensure_task_output_access(tid, auth_context)
+
+        manifest = self._file_manager.get_task_output_manifest(tid)
+        if manifest and isinstance(manifest, dict):
+            files: List[Dict] = []
+            manifest_files = manifest.get("files") or []
+            result_json = manifest.get("resultJson")
+            has_result_file = False
+
+            for item in manifest_files:
+                if not isinstance(item, dict):
+                    continue
+                name = str(item.get("name") or "")
+                if not name:
+                    continue
+
+                size_bytes = int(item.get("size") or 0)
+                checksum = str(item.get("checksum") or "")
+                row = {
+                    "name": name,
+                    "size": self._format_size_label(size_bytes),
+                    "hash": checksum[:16],
+                }
+
+                if name == "result.json" and result_json is not None:
+                    row["content"] = json.dumps(result_json, ensure_ascii=False, indent=2)
+                    has_result_file = True
+
+                files.append(row)
+
+            if result_json is not None and not has_result_file:
+                result_content = json.dumps(result_json, ensure_ascii=False, indent=2)
+                files.insert(0, {
+                    "name": "result.json",
+                    "size": self._format_size_label(len(result_content.encode("utf-8"))),
+                    "hash": hashlib.sha256(result_content.encode("utf-8")).hexdigest()[:16],
+                    "content": result_content,
+                })
+
+            if files:
+                return files
 
         if task.get("outputs") and isinstance(task.get("outputs"), list):
             return task.get("outputs")

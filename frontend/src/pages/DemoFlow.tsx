@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { ArrowRight, Cpu, FileCode2, PackageCheck, PlayCircle, ShoppingCart, Wallet } from 'lucide-react'
-import { accountApi, demoApi, fileTransferApi, miningApi } from '../api'
+import { accountApi, demoApi, fileTransferApi, miningApi, taskApi } from '../api'
 
 interface LogEntry {
   time: string
@@ -12,8 +12,10 @@ interface LogEntry {
 const nowLabel = () => new Date().toLocaleTimeString()
 
 export default function DemoFlow() {
+  const initialIdentity = localStorage.getItem('wallet_address') || ''
   const [orderAddress, setOrderAddress] = useState('')
   const [minerAddress, setMinerAddress] = useState('')
+  const [activeIdentity, setActiveIdentity] = useState(initialIdentity)
   const [orderId, setOrderId] = useState('')
   const [taskId, setTaskId] = useState('')
   const [busyAction, setBusyAction] = useState('')
@@ -35,6 +37,9 @@ export default function DemoFlow() {
     finalOrderStatus: '-',
     chainHeight: 0,
   })
+  const [runtimeResult, setRuntimeResult] = useState('')
+  const [runtimeResultLoading, setRuntimeResultLoading] = useState(false)
+  const [runtimeResultError, setRuntimeResultError] = useState('')
   const [balances, setBalances] = useState({
     orderInitial: 0,
     orderCurrent: 0,
@@ -68,6 +73,17 @@ export default function DemoFlow() {
 
   const setRaw = (key: string, value: unknown) => {
     setRawData((prev) => ({ ...prev, [key]: value }))
+  }
+
+  const useIdentity = (address: string, label: string) => {
+    if (!address) {
+      setUiError(`${label} address is empty`)
+      return false
+    }
+    localStorage.setItem('wallet_address', address)
+    setActiveIdentity(address)
+    appendLog('Switch RPC identity', true, `${label}: ${address}`)
+    return true
   }
 
   const syncBalanceForAddress = async (role: 'order' | 'miner', address: string) => {
@@ -153,12 +169,51 @@ export default function DemoFlow() {
     }
   }
 
+  const fetchRuntimeResult = async (tid?: string) => {
+    const targetTaskId = (tid || taskId || '').trim()
+    if (!targetTaskId) {
+      setRuntimeResult('')
+      setRuntimeResultError('taskId 为空，无法获取运行结果')
+      return
+    }
+
+    setRuntimeResultLoading(true)
+    setRuntimeResultError('')
+    try {
+      // 任务输出仅 owner 可见：结果查询时切换为下单账户身份。
+      if (orderAddress) {
+        useIdentity(orderAddress, 'buyer')
+      }
+      const outputs = await taskApi.getTaskOutputs(targetTaskId)
+      const resultFile = outputs.find((item) => item.name === 'result.json')
+      if (!resultFile) {
+        setRuntimeResult('')
+        setRuntimeResultError('未找到 result.json，请先完成任务或检查任务输出权限')
+        return
+      }
+
+      if (resultFile.content && String(resultFile.content).trim()) {
+        setRuntimeResult(resultFile.content)
+      } else {
+        setRuntimeResult(JSON.stringify(resultFile, null, 2))
+      }
+      appendLog('Fetch task result', true, `taskId=${targetTaskId}`)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      setRuntimeResult('')
+      setRuntimeResultError(msg)
+      appendLog('Fetch task result', false, msg)
+    } finally {
+      setRuntimeResultLoading(false)
+    }
+  }
+
   const createOrderWallet = async () => {
     const res = await callAction('Create order account', () => demoApi.createWallet('manual-order'))
     const addr = res.address || ''
     if (!addr) throw new Error('order account address missing')
     setOrderAddress(addr)
-    localStorage.setItem('wallet_address', addr)
+    useIdentity(addr, 'buyer')
     setRaw('orderWallet', res)
     appendLog('Create order account', true, addr)
     await syncBalanceForAddress('order', addr)
@@ -210,7 +265,7 @@ export default function DemoFlow() {
 
   const submitOrder = async () => {
     if (!orderAddress) throw new Error('please create or input order account first')
-    localStorage.setItem('wallet_address', orderAddress)
+    useIdentity(orderAddress, 'buyer')
     const res = await callAction('Submit order', () => demoApi.submitOrderManual({
       buyerAddress: orderAddress,
       gpuType: form.gpuType,
@@ -233,7 +288,7 @@ export default function DemoFlow() {
 
   const acceptOrder = async () => {
     if (!orderId || !minerAddress) throw new Error('need orderId and miner account')
-    localStorage.setItem('wallet_address', minerAddress)
+    useIdentity(minerAddress, 'miner')
     const res = await callAction('Accept order', () => demoApi.acceptOrder(orderId, minerAddress))
     setTaskId(res.taskId)
     setRaw('acceptOrder', res)
@@ -266,6 +321,7 @@ export default function DemoFlow() {
     const res = await callAction('Complete order', () => demoApi.completeOrderManual(orderId, taskId, form.resultData))
     setRaw('completeOrder', res)
     appendLog('Complete order', true, res.status)
+    await fetchRuntimeResult(taskId)
     await syncBalances()
   }
 
@@ -282,6 +338,7 @@ export default function DemoFlow() {
     setRaw('chainInfo', chainInfo)
     appendLog('Query order', true, `status=${String(orderInfo.status || '-')}`)
     applyDemoBalances(orderInfo)
+    await fetchRuntimeResult(taskId)
     await syncBalances()
   }
 
@@ -291,8 +348,12 @@ export default function DemoFlow() {
     setUiError('')
     setUiMessage('')
     setStats({ acceptedOrders: 0, runningPrograms: 0, finalOrderStatus: '-', chainHeight: 0 })
+    setRuntimeResult('')
+    setRuntimeResultError('')
+    setRuntimeResultLoading(false)
     setOrderAddress('')
     setMinerAddress('')
+    setActiveIdentity('')
     setOrderId('')
     setTaskId('')
     setSelectedFileName('')
@@ -326,6 +387,18 @@ export default function DemoFlow() {
         <div>
           <h1 className="text-2xl font-bold text-console-text">Manual Dual-Account Demo</h1>
           <p className="text-console-text-muted mt-1">Create accounts, submit an order, accept it as miner, track status, and complete.</p>
+          <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+            <span className="text-console-text-muted">Current RPC identity:</span>
+            <span className="font-mono px-2 py-1 rounded border border-console-border bg-console-bg text-console-text break-all">
+              {activeIdentity || '-'}
+            </span>
+            <button className="btn-ghost py-1 px-2" onClick={() => useIdentity(orderAddress, 'buyer')} disabled={disabled || !orderAddress}>
+              Use Buyer
+            </button>
+            <button className="btn-ghost py-1 px-2" onClick={() => useIdentity(minerAddress, 'miner')} disabled={disabled || !minerAddress}>
+              Use Miner
+            </button>
+          </div>
         </div>
         <div className="flex items-center gap-2">
           <button onClick={clearAll} className="btn-secondary">Clear Panel</button>
@@ -435,6 +508,9 @@ export default function DemoFlow() {
           <div className="grid grid-cols-2 gap-2 mt-3">
             <button className="btn-secondary" onClick={refreshStatus} disabled={disabled}>Refresh Miner Status</button>
             <button className="btn-secondary" onClick={queryOrder} disabled={disabled}>Query Order / Chain</button>
+            <button className="btn-secondary col-span-2" onClick={() => fetchRuntimeResult(taskId)} disabled={disabled || runtimeResultLoading}>
+              {runtimeResultLoading ? 'Loading Result...' : 'Fetch Runtime Result (result.json)'}
+            </button>
           </div>
           <div className="grid grid-cols-2 gap-3 mt-4">
             <div className="rounded border border-console-border px-3 py-2 bg-console-bg">
@@ -460,6 +536,18 @@ export default function DemoFlow() {
             <div>Miner Payout: {settlement.minerPayout.toFixed(4)} MAIN</div>
             <div>Platform Fee: {settlement.platformFee.toFixed(4)} MAIN</div>
             <div>Treasury Fee: {settlement.treasuryFee.toFixed(4)} MAIN</div>
+          </div>
+          <div className="mt-3 rounded border border-console-border bg-console-bg p-3">
+            <div className="text-xs text-console-text-muted mb-2">Runtime Result Feedback (Owner-only)</div>
+            {runtimeResultError ? (
+              <div className="text-xs text-red-400 break-all">{runtimeResultError}</div>
+            ) : runtimeResult ? (
+              <pre className="text-xs text-console-text overflow-auto max-h-[220px] whitespace-pre-wrap break-words">
+{runtimeResult}
+              </pre>
+            ) : (
+              <div className="text-xs text-console-text-muted">No runtime result yet.</div>
+            )}
           </div>
         </div>
       </div>

@@ -11,6 +11,25 @@ Set-Location $RepoRoot
 $env:PYTHONUTF8 = '1'
 $env:PYTHONIOENCODING = 'utf-8'
 
+Write-Host '[VisualDemo] Building frontend (frontend/dist)...' -ForegroundColor Cyan
+Push-Location (Join-Path $RepoRoot 'frontend')
+try {
+    if (-not (Test-Path 'node_modules')) {
+        Write-Host '[VisualDemo] Installing frontend dependencies...' -ForegroundColor Yellow
+        npm install
+        if ($LASTEXITCODE -ne 0) {
+            throw 'npm install failed'
+        }
+    }
+
+    npm run build
+    if ($LASTEXITCODE -ne 0) {
+        throw 'npm run build failed'
+    }
+} finally {
+    Pop-Location
+}
+
 Write-Host '[VisualDemo] Starting local node...' -ForegroundColor Cyan
 
 if (Test-Path $PidFile) {

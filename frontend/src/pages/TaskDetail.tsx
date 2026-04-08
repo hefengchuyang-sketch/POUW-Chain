@@ -46,6 +46,7 @@ export default function TaskDetail() {
   const [filesLoading, setFilesLoading] = useState(false)
   const [logsLoading, setLogsLoading] = useState(false)
   const [outputsLoading, setOutputsLoading] = useState(false)
+  const [outputsError, setOutputsError] = useState<string>('')
 
   // 获取任务基本信息
   const fetchTask = useCallback(async () => {
@@ -110,11 +111,15 @@ export default function TaskDetail() {
   const fetchOutputs = useCallback(async () => {
     if (!taskId) return
     setOutputsLoading(true)
+    setOutputsError('')
     try {
       const outputs = await taskApi.getTaskOutputs(taskId)
       setOutputFiles(outputs)
     } catch (err) {
       console.error('获取输出文件失败:', err)
+      const msg = err instanceof Error ? err.message : '获取输出失败'
+      setOutputsError(msg)
+      setOutputFiles([])
     } finally {
       setOutputsLoading(false)
     }
@@ -504,6 +509,13 @@ export default function TaskDetail() {
                   <RefreshCw size={24} className="animate-spin text-console-accent" />
                 </div>
               ) : task?.status === 'completed' ? (
+                outputsError ? (
+                  <div className="flex flex-col items-center justify-center h-full text-console-text-muted">
+                    <AlertTriangle size={24} className="mb-2 text-yellow-400" />
+                    <p>无法查看输出结果</p>
+                    <p className="text-xs mt-1">{outputsError}</p>
+                  </div>
+                ) : (
                 outputFiles.length > 0 ? (
                   <div className="space-y-4">
                     <h3 className="font-medium text-console-text">{t('taskDetail.outputFiles')}</h3>
@@ -520,6 +532,11 @@ export default function TaskDetail() {
                               <div className="text-xs text-console-text-muted">
                                 {file.size} · {t('taskDetail.hash')} {file.hash}
                               </div>
+                              {file.name === 'result.json' && file.content && (
+                                <pre className="mt-2 max-w-[640px] overflow-auto rounded bg-console-bg p-3 text-xs text-console-text-muted border border-console-border">
+{file.content}
+                                </pre>
+                              )}
                             </div>
                           </div>
                           <div className="flex items-center gap-2">
@@ -546,6 +563,7 @@ export default function TaskDetail() {
                     <File size={32} className="mb-2 opacity-50" />
                     <p>{t('taskDetail.completedNoOutput')}</p>
                   </div>
+                )
                 )
               ) : (
                 <div className="flex flex-col items-center justify-center h-full text-console-text-muted">
