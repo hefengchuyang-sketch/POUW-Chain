@@ -5948,6 +5948,32 @@ class NodeRPCService:
             )
         self._file_rate_limits[action].append(now)
 
+    def _ensure_file_access(self, file_ref: str, auth_context: Dict) -> Dict:
+        """校验文件访问权限：仅文件所有者或管理员可读。"""
+        info = self._file_manager.get_file_info(file_ref)
+        if not info:
+            raise RPCError(RPCErrorCode.INVALID_PARAMS.value, f"文件不存在: {file_ref}")
+
+        owner = str(info.get("owner") or "")
+        caller = self._get_auth_user(auth_context, self.miner_address or "anonymous")
+        is_admin = bool(auth_context.get("is_admin", False))
+
+        if owner and caller != owner and not is_admin:
+            raise RPCError(-32403, "Permission denied: only file owner can access")
+
+        return info
+
+    def _ensure_upload_session_access(self, upload_id: str, auth_context: Dict):
+        """校验上传会话访问权限。"""
+        owner = self._file_manager.get_upload_owner(upload_id)
+        if owner is None:
+            raise RPCError(RPCErrorCode.INVALID_PARAMS.value, f"上传会话不存在: {upload_id}")
+
+        caller = self._get_auth_user(auth_context, self.miner_address or "anonymous")
+        is_admin = bool(auth_context.get("is_admin", False))
+        if owner and caller != owner and not is_admin:
+            raise RPCError(-32403, "Permission denied: only uploader can access upload session")
+
     def _file_init_upload(
         self,
         filename: str,
@@ -5962,7 +5988,8 @@ class NodeRPCService:
         后续通过 file_uploadChunk 逐块上传。
         """
         self._check_file_rate("init_upload")
-        owner = self.miner_address or "anonymous"
+        auth_context = kwargs.get("auth_context", {})
+        owner = self._get_auth_user(auth_context, self.miner_address or "anonymous")
         checksum = checksumSha256 or sha256Hash
         if not checksum:
             raise RPCError(RPCErrorCode.INVALID_PARAMS.value, "缺少 checksumSha256/sha256Hash")
@@ -5983,6 +6010,8 @@ class NodeRPCService:
     ) -> Dict:
         """上传单个分块（data 为 Base64 编码）。"""
         self._check_file_rate("upload_chunk")
+        auth_context = kwargs.get("auth_context", {})
+        self._ensure_upload_session_access(uploadId, auth_context)
         payload = data or chunkData
         if not payload:
             raise RPCError(RPCErrorCode.INVALID_PARAMS.value, "缺少 data/chunkData")
@@ -5994,10 +6023,14 @@ class NodeRPCService:
     
     def _file_finalize_upload(self, uploadId: str, **kwargs) -> Dict:
         """完成上传：校验 SHA256 并合并分块，返回 fileRef。"""
+        auth_context = kwargs.get("auth_context", {})
+        self._ensure_upload_session_access(uploadId, auth_context)
         return self._file_manager.finalize_upload(upload_id=uploadId)
     
     def _file_get_upload_progress(self, uploadId: str, **kwargs) -> Dict:
         """查询上传进度。"""
+        auth_context = kwargs.get("auth_context", {})
+        self._ensure_upload_session_access(uploadId, auth_context)
         result = self._file_manager.get_upload_progress(uploadId)
         if not result:
             raise RPCError(RPCErrorCode.INVALID_PARAMS.value, f"上传会话不存在: {uploadId}")
@@ -6005,9 +6038,10 @@ class NodeRPCService:
     
     def _file_get_info(self, fileRef: str, **kwargs) -> Dict:
         """获取已上传文件的元数据。"""
-        info = self._file_manager.get_file_info(fileRef)
-        if not info:
-            raise RPCError(RPCErrorCode.INVALID_PARAMS.value, f"文件不存在: {fileRef}")
+        if not re.fullmatch(r"[a-f0-9]{16}", str(fileRef or "")):
+            raise RPCError(RPCErrorCode.INVALID_PARAMS.value, "非法 fileRef")
+        auth_context = kwargs.get("auth_context", {})
+        info = self._ensure_file_access(fileRef, auth_context)
         return info
     
     def _file_download_chunk(
@@ -6018,6 +6052,10 @@ class NodeRPCService:
         **kwargs
     ) -> Dict:
         """分块下载已上传的文件。"""
+        if not re.fullmatch(r"[a-f0-9]{16}", str(fileRef or "")):
+            raise RPCError(RPCErrorCode.INVALID_PARAMS.value, "非法 fileRef")
+        auth_context = kwargs.get("auth_context", {})
+        self._ensure_file_access(fileRef, auth_context)
         self._check_file_rate("download_chunk")
         return self._file_manager.download_chunk(
             file_ref=fileRef,
@@ -6055,6 +6093,8 @@ class NodeRPCService:
     
     def _file_cancel_upload(self, uploadId: str, **kwargs) -> Dict:
         """取消上传并清理临时文件。"""
+        auth_context = kwargs.get("auth_context", {})
+        self._ensure_upload_session_access(uploadId, auth_context)
         cancelled = self._file_manager.cancel_upload(uploadId)
         if not cancelled:
             raise RPCError(RPCErrorCode.INVALID_PARAMS.value, f"上传会话不存在: {uploadId}")
@@ -6129,6 +6169,10 @@ class NodeRPCService:
         客户端收到后用自己的会话密钥解密。
         传输过程中的数据始终是密文。
         """
+        if not re.fullmatch(r"[a-f0-9]{16}", str(fileRef or "")):
+            raise RPCError(RPCErrorCode.INVALID_PARAMS.value, "非法 fileRef")
+        auth_context = kwargs.get("auth_context", {})
+        self._ensure_file_access(fileRef, auth_context)
         self._check_file_rate("download_chunk")
         return self._file_manager.e2e_encrypt_download_chunk(
             file_ref=fileRef,

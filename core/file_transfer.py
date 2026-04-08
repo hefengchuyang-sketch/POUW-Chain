@@ -23,6 +23,7 @@ import uuid
 import shutil
 import logging
 import threading
+import re
 from dataclasses import dataclass, field, asdict
 from typing import Dict, List, Optional, Tuple
 from pathlib import Path
@@ -109,6 +110,7 @@ ALLOWED_DATA_EXTENSIONS = {
 
 # 禁止的文件名模式（防路径穿越）
 BLOCKED_FILENAME_CHARS = {'..', '/', '\\', '\x00'}
+FILE_REF_PATTERN = re.compile(r"^[a-f0-9]{16}$")
 
 
 def validate_filename(filename: str) -> bool:
@@ -123,6 +125,13 @@ def validate_filename(filename: str) -> bool:
     if ext and ext not in ALLOWED_DATA_EXTENSIONS:
         return False
     return True
+
+
+def validate_file_ref(file_ref: str) -> bool:
+    """验证 file_ref 是否为系统生成的 16 位十六进制 ID。"""
+    if not isinstance(file_ref, str):
+        return False
+    return bool(FILE_REF_PATTERN.fullmatch(file_ref))
 
 
 # ==================== 分块文件管理器 ====================
@@ -426,6 +435,8 @@ class ChunkedFileManager:
 
     def get_file_path(self, file_ref: str) -> Optional[str]:
         """获取已上传文件的磁盘路径（供 Docker 挂载）。"""
+        if not validate_file_ref(file_ref):
+            return None
         data_path = os.path.join(self.files_dir, file_ref, "data")
         if os.path.exists(data_path):
             return data_path
@@ -433,6 +444,8 @@ class ChunkedFileManager:
 
     def get_file_info(self, file_ref: str) -> Optional[dict]:
         """获取文件元数据。"""
+        if not validate_file_ref(file_ref):
+            return None
         with self._lock:
             info = self._files.get(file_ref)
         if info:
@@ -460,6 +473,9 @@ class ChunkedFileManager:
         Returns:
             {data: base64, offset, length, totalSize, hasMore}
         """
+        if not validate_file_ref(file_ref):
+            raise ValueError("非法 fileRef")
+
         data_path = self.get_file_path(file_ref)
         if not data_path:
             raise ValueError(f"文件不存在: {file_ref}")
@@ -707,6 +723,14 @@ class ChunkedFileManager:
             "completed": session.completed,
             "fileRef": session.file_ref,
         }
+
+    def get_upload_owner(self, upload_id: str) -> Optional[str]:
+        """获取上传会话所有者。"""
+        with self._lock:
+            session = self._sessions.get(upload_id)
+        if not session:
+            return None
+        return session.owner or ""
 
     def cancel_upload(self, upload_id: str) -> bool:
         """取消上传会话并清理临时文件。"""

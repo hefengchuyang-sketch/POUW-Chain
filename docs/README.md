@@ -32,6 +32,11 @@ Start here if you need to run, debug, or extend the system.
 3. `API.md` (method reference)
 4. `OPERATIONS.md` and `DEPLOYMENT.md` (ops/deployment)
 5. `SECURITY_HARDENING.md` (production hardening checklist)
+6. `SECURITY_BASELINE_CHECKLIST.md` (release gate and minimum controls)
+
+Quick regression command:
+
+`python -m pytest tests/test_security_regression_access.py -q`
 
 ## Suggested Review Sequence (60-90 minutes)
 

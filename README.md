@@ -310,6 +310,13 @@ For deeper verification, see `docs/CONSENSUS.md`, `docs/SECURITY_ARCHITECTURE.md
 Use the role-based docs index as entry point:
 
 - [Docs Home (Reviewer / Investor / Developer paths)](docs/README.md)
+- [Security Baseline Checklist](docs/SECURITY_BASELINE_CHECKLIST.md)
+
+Security regression quick check:
+
+```bash
+python -m pytest tests/test_security_regression_access.py -q
+```
 
 ---
 

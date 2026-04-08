@@ -1030,6 +1030,7 @@ class SandboxExecutor:
         self._docker = DockerManager()
         self._force_simulate = force_simulate
         self._file_manager = file_manager
+        self._allow_inprocess_fallback = os.getenv("ALLOW_INPROCESS_FALLBACK", "false").lower() == "true"
 
         # 检测执行模式
         if not force_simulate and self._docker.available:
@@ -1636,8 +1637,29 @@ class SandboxExecutor:
             # 模式 1: Docker 容器真实执行（生产推荐）
             return self._execute_docker(ctx)
         elif has_code and want_real:
-            # 模式 2: 进程内受限执行（开发降级）
-            return self._execute_in_process(ctx)
+            # 模式 2: 进程内受限执行（仅显式开启）
+            if self._allow_inprocess_fallback:
+                return self._execute_in_process(ctx)
+
+            self._log(
+                f"BLOCKED: Docker unavailable and in-process fallback disabled for {ctx.context_id}"
+            )
+            ctx.status = SandboxStatus.FAILED
+            ctx.end_time = time.time()
+            result = SandboxResult(
+                context_id=ctx.context_id,
+                miner_id=ctx.miner_id,
+                job_id=ctx.job_id,
+                success=False,
+                result_hash="",
+                proof_data="",
+                execution_time_ms=0,
+                resource_usage={},
+                environment=ctx.config.environment,
+                error_message="docker_required_for_real_execution",
+            )
+            self.results.append(result)
+            return result
         else:
             # 模式 3: 纯模拟（无真实代码时的兼容回退）
             self._log(f"WARN: Simulated execution for {ctx.context_id} (no task_code or forced simulate)")
