@@ -16,6 +16,7 @@ An innovative decentralized blockchain platform that transforms real computation
 - [Privacy-First Compute Bank Thesis](#privacy-first-compute-bank-thesis)
 - [Founder Context](#founder-context)
 - [Current Stage & Validation Needs](#current-stage--validation-needs)
+- [Implementation Status & Known Gaps](#implementation-status--known-gaps)
 - [Business Model](#business-model)
 - [Why This Matters for Human Progress](#why-this-matters-for-human-progress)
 - [Key Features](#key-features)
@@ -107,6 +108,36 @@ The project is now in a critical phase: real-world validation and debug converge
 - Continuous observation windows to measure SLA, fulfillment quality, and dispute rate
 
 This phase is where protocol assumptions meet production reality.
+
+---
+
+## Implementation Status & Known Gaps
+
+To keep this README accurate for reviewers, the following status reflects current repository reality.
+
+### Implemented and Demo-Ready
+
+- Core flow: order -> execution -> result return -> settlement visualization
+- Hybrid consensus controls (`mixed`, `sbox_only`, `pouw_only`)
+- Dual-witness transfer/exchange paths
+- Upload-timeout auto-cancel + treasury compensation
+- Arbitration staking, penalty routing, and validator voting
+
+### Implemented but Needs Production Validation
+
+- Privacy/security stack under heterogeneous real-world workloads
+- Dynamic pricing behavior under sustained multi-tenant traffic
+- Compensation/debt replay behavior under treasury stress conditions
+
+### Roadmap / Not Fully Production-Closed Yet
+
+- Confidential mode with stronger hardware isolation (TEE path)
+- Larger-scale benchmark evidence with external customer workloads
+- Operational hardening under long-running, mixed hardware clusters
+
+### Reviewer Note
+
+This project should be read as an engineering system in late prototype / early validation phase, not as a fully production-hardened network.
 
 ---
 
@@ -543,7 +574,7 @@ For the full RPC reference, see [docs/API.md](docs/API.md) and [docs/USER_GUIDE.
 
 ## Development Guide
 
-## Demo Package (One-Click)
+### Demo Package (One-Click)
 
 The repository now includes a complete runnable demo package in `Demo/`.
 
