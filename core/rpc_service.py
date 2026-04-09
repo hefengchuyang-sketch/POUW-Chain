@@ -5068,12 +5068,18 @@ class NodeRPCService:
         if not order_id:
             return None
 
+        auth_context = kwargs.get("auth_context", {})
+
+        def _can_view_full(owner_addr: str) -> bool:
+            caller = self._get_auth_user(auth_context, self.miner_address or "anonymous")
+            is_admin = bool(auth_context.get("is_admin", False))
+            return bool(owner_addr) and (caller == owner_addr or is_admin)
+
         if self.compute_market and hasattr(self.compute_market, "get_order"):
             try:
                 order = self.compute_market.get_order(order_id)
                 if order:
-                    data = order.to_dict()
-                    data.update({
+                    summary = {
                         "orderId": order.order_id,
                         "buyerAddress": order.buyer_address,
                         "gpuType": order.sector,
@@ -5083,12 +5089,40 @@ class NodeRPCService:
                         "totalPrice": order.total_budget,
                         "status": order.status.value,
                         "path": "compute_market_v3",
-                    })
-                    return data
+                    }
+
+                    if _can_view_full(order.buyer_address):
+                        data = order.to_dict()
+                        data.update(summary)
+                        data["permissionScope"] = "owner_or_admin"
+                        return data
+
+                    summary["permissionScope"] = "public_redacted"
+                    return summary
             except Exception:
                 pass
 
-        return self.market_orders.get(order_id)
+        order = self.market_orders.get(order_id)
+        if not order:
+            return None
+
+        owner_addr = str(order.get("buyerAddress") or order.get("owner") or "")
+        if _can_view_full(owner_addr):
+            out = dict(order)
+            out["permissionScope"] = "owner_or_admin"
+            return out
+
+        return {
+            "orderId": order.get("orderId", order_id),
+            "status": order.get("status", "unknown"),
+            "gpuType": order.get("gpuType", ""),
+            "gpuCount": order.get("gpuCount", 0),
+            "durationHours": order.get("durationHours", 0),
+            "pricePerHour": order.get("pricePerHour", 0),
+            "totalPrice": order.get("totalPrice", 0),
+            "path": "legacy_market_orders",
+            "permissionScope": "public_redacted",
+        }
     
     def _compute_get_market(self, gpu_type: str = None, **kwargs) -> Dict:
         """获取市场信息 - 真实数据"""
@@ -5479,12 +5513,45 @@ class NodeRPCService:
     def _compute_get_order_events(self, order_id: str, limit: int = 100, **kwargs) -> Dict:
         """查询订单生命周期交易事件（ComputeMarketV3）。"""
         if self.compute_market and hasattr(self.compute_market, "get_order_events"):
+            auth_context = kwargs.get("auth_context", {})
+            caller = self._get_auth_user(auth_context, self.miner_address or "anonymous")
+            is_admin = bool(auth_context.get("is_admin", False))
+
+            owner_addr = ""
+            if hasattr(self.compute_market, "get_order"):
+                try:
+                    order = self.compute_market.get_order(order_id)
+                    owner_addr = str(getattr(order, "buyer_address", "") or "") if order else ""
+                except Exception:
+                    owner_addr = ""
+
+            can_view_full = bool(owner_addr) and (caller == owner_addr or is_admin)
             events = self.compute_market.get_order_events(order_id, limit)
+
+            if not can_view_full:
+                redacted_events = []
+                for e in events:
+                    if not isinstance(e, dict):
+                        continue
+                    redacted_events.append({
+                        "action": e.get("action", ""),
+                        "submitted": bool(e.get("submitted", False)),
+                        "created_at": e.get("created_at", 0),
+                    })
+                return {
+                    "status": "success",
+                    "orderId": order_id,
+                    "events": redacted_events,
+                    "total": len(redacted_events),
+                    "permissionScope": "public_redacted",
+                }
+
             return {
                 "status": "success",
                 "orderId": order_id,
                 "events": events,
                 "total": len(events),
+                "permissionScope": "owner_or_admin",
             }
         return {
             "status": "failed",

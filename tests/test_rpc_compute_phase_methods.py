@@ -62,14 +62,43 @@ def test_compute_get_order_events_success_and_unavailable():
     assert res_unavailable["events"] == []
     assert res_unavailable["total"] == 0
 
-    events = [{"eventType": "create"}, {"eventType": "result_commit"}]
+    events = [{"action": "create", "tx": {"secret": "x"}}, {"action": "result_commit", "tx": {"secret": "y"}}]
+
+    class _Order:
+        buyer_address = "MAIN_buyer"
+
     svc.compute_market = SimpleNamespace(
-        get_order_events=lambda order_id, limit: events[:limit]
+        get_order_events=lambda order_id, limit: events[:limit],
+        get_order=lambda order_id: _Order(),
     )
-    res_ok = svc._compute_get_order_events("o1", 10)
+    res_ok = svc._compute_get_order_events("o1", 10, auth_context={"user_address": "MAIN_buyer"})
     assert res_ok["status"] == "success"
     assert res_ok["events"] == events
     assert res_ok["total"] == 2
+    assert res_ok["permissionScope"] == "owner_or_admin"
+
+
+def test_compute_get_order_events_public_is_redacted():
+    svc = _bare_service()
+
+    class _Order:
+        buyer_address = "MAIN_buyer"
+
+    svc.compute_market = SimpleNamespace(
+        get_order_events=lambda order_id, limit: [{
+            "action": "create",
+            "submitted": True,
+            "created_at": 123.0,
+            "tx": {"sensitive": "payload"},
+        }],
+        get_order=lambda order_id: _Order(),
+    )
+
+    res = svc._compute_get_order_events("o-public", 10)
+    assert res["status"] == "success"
+    assert res["permissionScope"] == "public_redacted"
+    assert res["events"][0]["action"] == "create"
+    assert "tx" not in res["events"][0]
 
 
 def test_compute_cancel_order_prefers_compute_market_path():
@@ -165,3 +194,40 @@ def test_compute_get_order_and_market_prefer_compute_market_v3():
     market = svc._compute_get_market("RTX4090")
     assert market["path"] == "compute_market_v3"
     assert market["available"] == 6
+
+
+def test_compute_get_order_public_redacts_sensitive_fields_for_v3():
+    svc = _bare_service()
+
+    class _Order:
+        order_id = "v3_sec_1"
+        buyer_address = "MAIN_buyer"
+        sector = "RTX4090"
+        gpu_count = 1
+        duration_hours = 2
+        max_price = 2.0
+        total_budget = 4.0
+        status = type("S", (), {"value": "created"})()
+
+        def to_dict(self):
+            return {
+                "order_id": self.order_id,
+                "task_encrypted_blob": "cipher_blob",
+                "result_encrypted": "enc_result",
+                "tee_attestation": {"report_id": "r1"},
+            }
+
+    svc.compute_market = SimpleNamespace(
+        get_order=lambda order_id: _Order() if order_id == "v3_sec_1" else None,
+    )
+
+    public_view = svc._compute_get_order("v3_sec_1")
+    assert public_view["orderId"] == "v3_sec_1"
+    assert public_view["permissionScope"] == "public_redacted"
+    assert "task_encrypted_blob" not in public_view
+    assert "result_encrypted" not in public_view
+    assert "tee_attestation" not in public_view
+
+    owner_view = svc._compute_get_order("v3_sec_1", auth_context={"user_address": "MAIN_buyer"})
+    assert owner_view["permissionScope"] == "owner_or_admin"
+    assert owner_view["task_encrypted_blob"] == "cipher_blob"
