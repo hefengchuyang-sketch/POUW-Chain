@@ -1,0 +1,26 @@
+{
+  "generatedAt": "2026-04-09T07:37:38Z",
+  "concurrency": {
+    "cases": 24,
+    "workers": 8,
+    "success": 24,
+    "failure": 0,
+    "successRate": 100.0,
+    "avgLatencyMs": 199.293,
+    "p95LatencyMs": 648.57,
+    "failureSamples": []
+  },
+  "restartRecovery": {
+    "fileRef": "b803603ae4614de7",
+    "ownerFileInfoAfterRestart": true,
+    "ownerDownloadAfterRestart": true,
+    "nonOwnerDeniedAfterRestart": true
+  },
+  "reproducibility": {
+    "rounds": 20,
+    "hashMatch": 20,
+    "hashMatchRate": 100.0,
+    "sampleFileRef": "adc1e53e593f41c6",
+    "expectedSha256": "34097e200e02c4ac2c38c208fbd98148fb409e40797dd2a05855d26adc355226"
+  }
+}

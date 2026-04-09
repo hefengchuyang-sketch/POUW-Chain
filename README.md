@@ -325,6 +325,65 @@ Reviewer evidence reports:
 - [Public Dataset Validation (Digits)](docs/reports/public_dataset_validation_digits.md)
 - [Adversarial Access Control Report](docs/reports/adversarial_access_report.md)
 - [Large Chunk Integrity Report](docs/reports/large_chunk_integrity_report.md)
+- [Short Reliability Validation Report](docs/reports/short_reliability_report.md)
+- [Provider No-Leakage Write Test Report](docs/reports/provider_no_leakage_report.md)
+- [Full Validation Summary](docs/reports/full_validation_summary.md)
+
+### Validation Snapshot (Local)
+
+Based on the latest local evidence package:
+
+- Full validation summary: `23/23` checks passed (`100.0%`)
+- Public dataset end-to-end success: Iris `100.0%`, Digits `100.0%`
+- Adversarial authorization controls: key deny/allow checks `100.0%`
+- Large-chunk integrity and malformed input rejection: `100.0%`
+- Short reliability suite (concurrency/restart/reproducibility): all core checks passed
+- Provider no-leakage write test: scanner/runtime checks `100.0%`
+
+### Critical Reviewer Questions (And Current Answers)
+
+1) Will low-quality compute providers flood the network?
+
+- Current answer: partially mitigated, not eliminated.
+- Evidence today: owner-only access controls, adversarial denial checks, and task-result integrity checks are strong.
+- Remaining risk: quality-level differentiation is still not fully stress-tested under long-running, heterogeneous, multi-tenant loads.
+- Next validation priority: sustained quality scoring and slashing behavior under noisy/minimally-performing providers.
+
+2) Can high-quality compute be reliably delivered and settled?
+
+- Current answer: protocol path is validated, production-grade SLO still pending.
+- Evidence today: end-to-end task path and restart/reproducibility tests pass locally; large-file transfer integrity is stable.
+- Remaining risk: no multi-region, customer-grade long-window benchmark yet.
+- Next validation priority: external workload replay and duration-based fulfillment SLO tracking.
+
+3) Is there a risk of economic model collapse?
+
+- Current answer: collapse risk is reduced by explicit penalties/treasury routes, but not fully ruled out.
+- Evidence today: default compensation and arbitration penalty routes are implemented in code.
+- Remaining risk: treasury stress, correlated defaults, and extreme pricing feedback loops need simulation or live-paper trading data.
+- Next validation priority: treasury stress scenarios and adverse-demand Monte Carlo backtests.
+
+4) Does the token have guaranteed value preservation?
+
+- Current answer: no guarantee.
+- Position: this repository demonstrates protocol mechanics, not a financial guarantee product.
+- Evidence today: transparent fee/reward routing and burn/treasury logic exist.
+- Remaining risk: long-term value depends on real demand, governance quality, and market structure, not code alone.
+
+5) Is privacy fully guaranteed?
+
+- Current answer: no, privacy is strong but not absolute.
+- Evidence today: encrypted channels, owner-only access controls, and provider-side no-leakage write tests pass.
+- Remaining risk: advanced side-channel and host-level attacks are out of current local test scope.
+- Next validation priority: stronger confidential-compute path and third-party security review.
+
+### Scope Boundary
+
+The current evidence package is local and protocol-focused. It supports engineering credibility, but should not be over-claimed as:
+
+- full production readiness certification,
+- guaranteed token value preservation,
+- or absolute privacy/security proof.
 
 ---
 

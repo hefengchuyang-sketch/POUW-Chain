@@ -1,0 +1,133 @@
+{
+  "generatedAt": "2026-04-09T07:44:15Z",
+  "reportsDir": "docs\\reports",
+  "totalChecks": 23,
+  "passedChecks": 23,
+  "passRate": 100.0,
+  "overallStatus": "PASS",
+  "checks": [
+    {
+      "name": "Iris end-to-end",
+      "value": 100.0,
+      "pass": true
+    },
+    {
+      "name": "Iris owner-only output",
+      "value": 100.0,
+      "pass": true
+    },
+    {
+      "name": "Digits end-to-end",
+      "value": 100.0,
+      "pass": true
+    },
+    {
+      "name": "Digits owner-only output",
+      "value": 100.0,
+      "pass": true
+    },
+    {
+      "name": "Adversarial nonOwnerUploadSessionDeniedRate",
+      "value": 100.0,
+      "pass": true
+    },
+    {
+      "name": "Adversarial nonOwnerFileInfoDeniedRate",
+      "value": 100.0,
+      "pass": true
+    },
+    {
+      "name": "Adversarial nonOwnerFileDownloadDeniedRate",
+      "value": 100.0,
+      "pass": true
+    },
+    {
+      "name": "Adversarial nonOwnerTaskOutputDeniedRate",
+      "value": 100.0,
+      "pass": true
+    },
+    {
+      "name": "Adversarial malformedFileRefRejectedRate",
+      "value": 100.0,
+      "pass": true
+    },
+    {
+      "name": "Adversarial adminCrossOwnerAllowedRate",
+      "value": 100.0,
+      "pass": true
+    },
+    {
+      "name": "LargeChunk multiChunkUploadSuccessRate",
+      "value": 100.0,
+      "pass": true
+    },
+    {
+      "name": "LargeChunk integrityVerifiedRate",
+      "value": 100.0,
+      "pass": true
+    },
+    {
+      "name": "LargeChunk ownerOnlyDownloadEnforcedRate",
+      "value": 100.0,
+      "pass": true
+    },
+    {
+      "name": "LargeChunk invalidChunkRejectedRate",
+      "value": 100.0,
+      "pass": true
+    },
+    {
+      "name": "LargeChunk malformedFileRefRejectedRate",
+      "value": 100.0,
+      "pass": true
+    },
+    {
+      "name": "ShortReliability concurrency success",
+      "value": 100.0,
+      "pass": true
+    },
+    {
+      "name": "ShortReliability reproducibility",
+      "value": 100.0,
+      "pass": true
+    },
+    {
+      "name": "ShortReliability restart owner info",
+      "value": true,
+      "pass": true
+    },
+    {
+      "name": "ShortReliability restart owner download",
+      "value": true,
+      "pass": true
+    },
+    {
+      "name": "ShortReliability restart non-owner deny",
+      "value": true,
+      "pass": true
+    },
+    {
+      "name": "NoLeak scanner block rate",
+      "value": 100.0,
+      "pass": true
+    },
+    {
+      "name": "NoLeak runtime write blocked",
+      "value": 100.0,
+      "pass": true
+    },
+    {
+      "name": "NoLeak runtime no file created",
+      "value": 100.0,
+      "pass": true
+    }
+  ],
+  "sources": {
+    "public_dataset_validation_iris": true,
+    "public_dataset_validation_digits": true,
+    "adversarial_access_report": true,
+    "large_chunk_integrity_report": true,
+    "short_reliability_report": true,
+    "provider_no_leakage_report": true
+  }
+}

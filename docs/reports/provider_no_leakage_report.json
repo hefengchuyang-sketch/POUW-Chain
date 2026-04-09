@@ -1,0 +1,118 @@
+{
+  "generatedAt": "2026-04-09T07:43:53Z",
+  "scanner": {
+    "totalCases": 6,
+    "blockedCases": 6,
+    "blockedRate": 100.0,
+    "details": [
+      {
+        "case": "block_os_import",
+        "blocked": true,
+        "warnings": [
+          "拒绝：禁止导入危险模块 \"os\""
+        ]
+      },
+      {
+        "case": "block_subprocess_call",
+        "blocked": true,
+        "warnings": [
+          "拒绝：禁止导入危险模块 \"subprocess\"",
+          "拒绝：检测到 subprocess 模块调用"
+        ]
+      },
+      {
+        "case": "block_socket_exfil",
+        "blocked": true,
+        "warnings": [
+          "拒绝：禁止导入危险模块 \"socket\""
+        ]
+      },
+      {
+        "case": "block_sensitive_path_open",
+        "blocked": true,
+        "warnings": [
+          "拒绝：检测到访问系统敏感路径"
+        ]
+      },
+      {
+        "case": "block_path_traversal_open",
+        "blocked": true,
+        "warnings": [
+          "拒绝：检测到路径穿越攻击"
+        ]
+      },
+      {
+        "case": "block_dynamic_import",
+        "blocked": true,
+        "warnings": [
+          "拒绝：检测到动态 __import__() 调用"
+        ]
+      }
+    ]
+  },
+  "runtime": {
+    "rounds": 8,
+    "writeBlockedRounds": 8,
+    "writeBlockedRate": 100.0,
+    "noProbeFileCreatedRounds": 8,
+    "noProbeFileCreatedRate": 100.0,
+    "details": [
+      {
+        "round": 1,
+        "executionSuccess": true,
+        "writeBlocked": true,
+        "errorType": "NameError",
+        "probeFileCreated": false
+      },
+      {
+        "round": 2,
+        "executionSuccess": true,
+        "writeBlocked": true,
+        "errorType": "NameError",
+        "probeFileCreated": false
+      },
+      {
+        "round": 3,
+        "executionSuccess": true,
+        "writeBlocked": true,
+        "errorType": "NameError",
+        "probeFileCreated": false
+      },
+      {
+        "round": 4,
+        "executionSuccess": true,
+        "writeBlocked": true,
+        "errorType": "NameError",
+        "probeFileCreated": false
+      },
+      {
+        "round": 5,
+        "executionSuccess": true,
+        "writeBlocked": true,
+        "errorType": "NameError",
+        "probeFileCreated": false
+      },
+      {
+        "round": 6,
+        "executionSuccess": true,
+        "writeBlocked": true,
+        "errorType": "NameError",
+        "probeFileCreated": false
+      },
+      {
+        "round": 7,
+        "executionSuccess": true,
+        "writeBlocked": true,
+        "errorType": "NameError",
+        "probeFileCreated": false
+      },
+      {
+        "round": 8,
+        "executionSuccess": true,
+        "writeBlocked": true,
+        "errorType": "NameError",
+        "probeFileCreated": false
+      }
+    ]
+  }
+}
