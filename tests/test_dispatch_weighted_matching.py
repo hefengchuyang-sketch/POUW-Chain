@@ -100,6 +100,26 @@ def test_deterministic_weighted_order_is_stable_for_same_input():
         market.close()
 
 
+def test_protocol_challenge_score_reproducible_with_chain_seed_provider():
+    market = ComputeMarketV3(db_path=_mk_db())
+    try:
+        market._dispatch_challenge_source = "chain"
+        market.set_dispatch_seed_provider(lambda: {
+            "prev_hash": "ab" * 32,
+            "height": 123,
+            "epoch": 7,
+        })
+
+        miner = _mk_miner("m_chain", 1, completed=5, failed=1, score=0.8)
+        seed = market._build_dispatch_seed("order_chain")
+        s1 = market._protocol_challenge_score("order_chain", miner, seed)
+        s2 = market._protocol_challenge_score("order_chain", miner, seed)
+
+        assert s1 == s2
+    finally:
+        market.close()
+
+
 def test_match_order_assigns_required_gpus_using_weighted_dispatch():
     market = ComputeMarketV3(db_path=_mk_db())
     try:

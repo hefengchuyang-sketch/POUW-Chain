@@ -569,6 +569,10 @@ class ComputeMarketV3:
         self._tee_full_enforce = _os.getenv("POUW_TEE_FULL_ENFORCE", "false").strip().lower() == "true"
         self._tee_audit_events: List[Dict[str, Any]] = []
         self._order_tx_submitter = None  # 可选回调：将订单事件投递到共识层
+        self._dispatch_seed_provider = None  # 可选回调：提供链上可复算挑战种子
+        self._dispatch_challenge_source = str(
+            _os.getenv("POUW_DISPATCH_CHALLENGE_SOURCE", "chain")
+        ).strip().lower()
         self._init_db()
         
         # 守护线程 — 巡检超时订单和离线矿工
@@ -710,6 +714,38 @@ class ComputeMarketV3:
         - 返回: (是否成功, 消息)
         """
         self._order_tx_submitter = submitter_fn
+
+    def set_dispatch_seed_provider(self, provider_fn):
+        """设置派单挑战种子提供器。
+
+        provider_fn 接口：callable() -> Dict[str, Any]
+        期望返回字段：prev_hash, height, epoch（任意子集）
+        """
+        self._dispatch_seed_provider = provider_fn
+
+    def _build_dispatch_seed(self, order_id: str) -> str:
+        """构造可复算的派单挑战种子。"""
+        if self._dispatch_challenge_source == "chain":
+            seed_data = {"order_id": order_id, "source": "chain"}
+            if self._dispatch_seed_provider:
+                try:
+                    payload = self._dispatch_seed_provider() or {}
+                    if isinstance(payload, dict):
+                        for k in ("prev_hash", "height", "epoch"):
+                            if k in payload:
+                                seed_data[k] = payload.get(k)
+                except Exception as e:
+                    logger.warning("dispatch_seed_provider failed: %s", e)
+            if "prev_hash" not in seed_data:
+                # 无链上上下文时退化为稳定可复算值（同订单一致）
+                seed_data["prev_hash"] = "fallback_no_chain"
+            return hashlib.sha256(
+                json.dumps(seed_data, sort_keys=True, ensure_ascii=False).encode()
+            ).hexdigest()
+
+        # 兼容旧模式：时间窗口
+        window = int(time.time() // 300)
+        return hashlib.sha256(f"time_window:{order_id}:{window}".encode()).hexdigest()
 
     def _build_order_lifecycle_tx(self,
                                   order_id: str,
@@ -1066,11 +1102,12 @@ class ComputeMarketV3:
             
             # 按协议挑战评分 + 质量/可靠性/时效 计算派单权重，
             # 再使用确定性加权抽签生成分配顺序（避免单纯最高分垄断）。
+            dispatch_seed = self._build_dispatch_seed(order.order_id)
             candidates: List[Tuple[MinerNode, float, float]] = []
             for miner in available:
                 if miner.declaration and miner.declaration.price_floor > order.max_price:
                     continue
-                challenge_score = self._protocol_challenge_score(order.order_id, miner)
+                challenge_score = self._protocol_challenge_score(order.order_id, miner, dispatch_seed)
                 dispatch_weight = self._compute_dispatch_weight(miner, challenge_score)
                 candidates.append((miner, dispatch_weight, challenge_score))
 
@@ -1112,6 +1149,8 @@ class ComputeMarketV3:
                 payload={
                     "assigned_miners": assigned,
                     "assigned_gpus": assigned_gpus,
+                    "challenge_seed": dispatch_seed,
+                    "challenge_source": self._dispatch_challenge_source,
                     "dispatch_weights": {
                         m.miner_id: round(w, 6) for m, w, _ in weighted_order
                     },
@@ -1133,11 +1172,11 @@ class ComputeMarketV3:
             
             return True, f"已匹配 {len(assigned)} 个矿工，共 {order.gpu_count} 张 GPU"
 
-    def _protocol_challenge_score(self, order_id: str, miner: MinerNode) -> float:
+    def _protocol_challenge_score(self, order_id: str, miner: MinerNode, dispatch_seed: str = "") -> float:
         """协议挑战分：以订单+矿工为输入的确定性随机分（0-1）。"""
-        window = int(time.time() // 300)  # 5 分钟窗口
+        seed = dispatch_seed or self._build_dispatch_seed(order_id)
         challenge = hashlib.sha256(
-            f"dispatch_challenge:{order_id}:{miner.miner_id}:{window}".encode()
+            f"dispatch_challenge:{order_id}:{miner.miner_id}:{seed}".encode()
         ).hexdigest()
         return int(challenge[:8], 16) / 0xFFFFFFFF
 

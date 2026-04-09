@@ -11,6 +11,8 @@ import json
 import uuid
 import time
 import logging
+import hashlib
+import hmac
 from typing import Dict, Any, Optional
 
 try:
@@ -127,6 +129,19 @@ class SecureModelRuntime:
                 "max_evidence_age_seconds": 86400,
                 "required_tcb_status": "up_to_date",
             }
+            payload_digest = hashlib.sha256(
+                b"|".join([
+                    payload.encrypted_data,
+                    payload.encrypted_key,
+                    payload.nonce,
+                    payload.tag,
+                ])
+            ).hexdigest()
+            sender_digest = str(encrypted_payload_dict.get("kms_binding_input", ""))
+            if sender_digest and sender_digest != payload_digest:
+                logger.error(f"[{self.node_id}] payload digest mismatch before decrypt")
+                return False
+
             ok, session_key, reason = self.kms_gate.request_session_key(
                 node_id=self.node_id,
                 attestation=attestation,
@@ -137,6 +152,14 @@ class SecureModelRuntime:
                 return False
             if not session_key:
                 logger.error(f"[{self.node_id}] KMS gate returned empty session key")
+                return False
+
+            # 将 KMS 会话授权与当前密文绑定，避免授权与负载解耦。
+            expected_binding = encrypted_payload_dict.get("kms_binding", "")
+            key_bytes = bytes.fromhex(session_key) if isinstance(session_key, str) else str(session_key).encode("utf-8")
+            actual_binding = hmac.new(key_bytes, payload_digest.encode("utf-8"), hashlib.sha256).hexdigest()
+            if expected_binding and not hmac.compare_digest(str(expected_binding), actual_binding):
+                logger.error(f"[{self.node_id}] KMS binding mismatch for payload")
                 return False
             
             # 使用硬件被隔离的私钥进行解密
@@ -236,11 +259,21 @@ class ModelDeploymentClient:
         # 3. 将加密的负载发过去
         payload = encrypted_payload.to_dict()
         payload["attestation"] = report_data
+        payload_digest = hashlib.sha256(
+            b"|".join([
+                encrypted_payload.encrypted_data,
+                encrypted_payload.encrypted_key,
+                encrypted_payload.nonce,
+                encrypted_payload.tag,
+            ])
+        ).hexdigest()
         payload["kms_policy"] = {
             "max_evidence_age_seconds": 86400,
             "required_tcb_status": "up_to_date",
             "allowed_measurements": [report_data.get("mrenclave", "")],
         }
+        # 由接收侧 KMS gate 下发 session_key 后校验该绑定。
+        payload["kms_binding_input"] = payload_digest
         return payload
 
 # ================= 演示测试 ==================

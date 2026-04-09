@@ -17,6 +17,7 @@ import os
 import re
 import datetime
 import mimetypes
+import logging
 from dataclasses import dataclass, field
 import inspect
 from typing import Dict, List, Optional, Any, Callable, Tuple
@@ -37,6 +38,8 @@ from core.rpc.models import (
 # 兼容性重导出: RPCServer, RPCHTTPHandler, RPCClient
 # 注意：RPCServer core/rpc/server.py 中，它会延迟导入 NodeRPCService 以避免循
 from core.rpc.server import RPCServer, RPCHTTPHandler, RPCClient
+
+logger = logging.getLogger(__name__)
 
 
 
@@ -163,6 +166,11 @@ class NodeRPCService:
             or auth_context.get("user_address")
             or default
         )
+
+    def _compute_v3_required(self) -> bool:
+        """是否强制 compute 写路径必须走 V3（禁用静默回退）。"""
+        raw = str(os.getenv("POUW_COMPUTE_V3_REQUIRED", "true")).strip().lower()
+        return raw in ("1", "true", "yes", "on")
 
     def _load_latest_keystore(self, address_hint: str = "") -> Optional[Dict]:
         """加载最新 keystore（可选按地址优先匹配）。"""
@@ -758,7 +766,7 @@ class NodeRPCService:
         self.registry.register(
             "compute_getOrder", self._compute_get_order,
             "查询算力订单",
-            RPCPermission.PUBLIC
+            RPCPermission.USER
         )
         self.registry.register(
             "compute_getMarket", self._compute_get_market,
@@ -788,7 +796,7 @@ class NodeRPCService:
         self.registry.register(
             "compute_getOrderEvents", self._compute_get_order_events,
             "获取订单生命周期交易事件",
-            RPCPermission.PUBLIC
+            RPCPermission.USER
         )
         self.registry.register(
             "compute_cancelOrder", self._compute_cancel_order,
@@ -4969,9 +4977,15 @@ class NodeRPCService:
                         "createdAt": int(order.created_at),
                         "path": "compute_market_v3",
                     }
-            except Exception:
-                # 发生异常时自动回退旧路径，保证兼容性。
-                pass
+            except Exception as e:
+                logger.exception("compute_submitOrder V3 path failed")
+                if self._compute_v3_required():
+                    return {
+                        "status": "failed",
+                        "error": "compute_v3_required",
+                        "message": f"compute_market_v3_error:{type(e).__name__}",
+                        "path": "compute_market_v3",
+                    }
 
         if not hasattr(self, "_demo_main_balances"):
             self._demo_main_balances = {}
@@ -5100,7 +5114,7 @@ class NodeRPCService:
                     summary["permissionScope"] = "public_redacted"
                     return summary
             except Exception:
-                pass
+                logger.exception("compute_getOrder V3 path failed")
 
         order = self.market_orders.get(order_id)
         if not order:
@@ -5139,7 +5153,7 @@ class NodeRPCService:
                     "path": "compute_market_v3",
                 }
             except Exception:
-                pass
+                logger.exception("compute_getMarket V3 path failed")
 
         orders = list(self.market_orders.values())
         
@@ -5174,8 +5188,15 @@ class NodeRPCService:
                         "message": msg,
                         "path": "compute_market_v3",
                     }
-            except Exception:
-                pass
+            except Exception as e:
+                logger.exception("compute_acceptOrder V3 path failed")
+                if self._compute_v3_required():
+                    return {
+                        "status": "failed",
+                        "orderId": order_id,
+                        "message": f"compute_market_v3_error:{type(e).__name__}",
+                        "path": "compute_market_v3",
+                    }
 
         if not order_id or order_id not in self.market_orders:
             raise RPCError(RPCErrorCode.INVALID_PARAMS.value, f"订单不存在 {order_id}")
@@ -5342,8 +5363,15 @@ class NodeRPCService:
                         "message": msg,
                         "path": "compute_market_v3",
                     }
-            except Exception:
-                pass
+            except Exception as e:
+                logger.exception("compute_completeOrder V3 path failed")
+                if self._compute_v3_required():
+                    return {
+                        "status": "failed",
+                        "orderId": order_id,
+                        "message": f"compute_market_v3_error:{type(e).__name__}",
+                        "path": "compute_market_v3",
+                    }
 
         if not order_id or order_id not in self.market_orders:
             raise RPCError(RPCErrorCode.INVALID_PARAMS.value, f"订单不存在 {order_id}")
