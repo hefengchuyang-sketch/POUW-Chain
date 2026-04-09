@@ -178,6 +178,11 @@ In short, this is an attempt to make compute economically useful and socially me
 - Earn block rewards by executing real, useful computation tasks
 - Real workloads: AI inference, numerical optimization, hash computation, etc.
 - Scoring weights: Completion rate 30% + Latency 25% + Online stability 25% + Block participation 20%
+- Dual-channel difficulty is active in code:
+    - Hash difficulty channel (`current_difficulty`)
+    - Work-threshold channel (`current_work_threshold`, auto-adjusted by recent mining observations)
+- Structured process proof (`proof_json`) is validated on-chain (proof hash, challenge commitment, anti-duplicate checks)
+- Idle-window anti-speculation is enabled: long consecutive idle blocks receive additional reward decay
 
 ### S-Box PoUW — Cryptographic Proof of Useful Work
 - Each block produces a verified **S-Box** (256-byte substitution box, fundamental to AES-class ciphers)
@@ -191,6 +196,9 @@ In short, this is an attempt to make compute economically useful and socially me
 - `consensus.mode` controls strategy: `mixed`, `sbox_only`, `pouw_only`
 - `consensus.sbox_ratio` controls SBOX_POUW target share in mixed mode (0.0 - 1.0)
 - Automatic fallback keeps liveness: S-Box unavailable -> POUW, both unavailable -> PoW fallback
+- Strategy governance is versioned and rollbackable:
+    - `chain_updateMechanismStrategy` supports version/rollout/max_ratio_step updates
+    - `chain_getInfo` returns `mechanismStrategy`
 
 ### Multi-Sector Architecture
 - Sectors divided by hardware type: H100, RTX4090, RTX3080, CPU, GENERAL
@@ -696,7 +704,27 @@ consensus:
 Evidence links:
 
 - Code: `core/consensus.py` (`consensus_mode`, `consensus_sbox_ratio`)
-- API example: `chain_getInfo` (`consensusMode`, `consensusSboxRatio`, distribution fields)
+- API example: `chain_getInfo` (`consensusMode`, `consensusSboxRatio`, `mechanismStrategy`, distribution fields)
+
+### 7. Mining Mechanism Update (2026-04)
+
+Current mining path includes the following implementation-level updates:
+
+- Dynamic dual-threshold mining:
+    - Hash target and PoUW work-threshold adjust independently using recent block observations.
+- Deterministic, auditable dispatch challenge seed:
+    - Default source is chain-style seed (`POUW_DISPATCH_CHALLENGE_SOURCE=chain`),
+      with compatibility fallback to time-window mode.
+    - `compute_getOrderEvents` includes `challenge_seed` / `challenge_source` in owner/admin scope.
+- Stronger runtime behavior in compute write path:
+    - `POUW_COMPUTE_V3_REQUIRED=true` (default) prevents silent fallback when V3 write path fails.
+
+Recommended production settings:
+
+```bash
+POUW_COMPUTE_V3_REQUIRED=true
+POUW_DISPATCH_CHALLENGE_SOURCE=chain
+```
 
 ---
 
