@@ -15,6 +15,7 @@ import time
 import math
 import json
 import os
+import secrets
 import logging
 import sys
 import threading
@@ -113,6 +114,51 @@ class PoUWExecutor:
         self._counter_lock = threading.Lock()
         self._sandbox = sandbox  # Optional[SandboxExecutor]
 
+    @staticmethod
+    def _digest_obj(obj: Any) -> str:
+        """稳定序列化后做 SHA256 摘要。"""
+        try:
+            payload = json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str)
+        except Exception:
+            payload = str(obj)
+        return hashlib.sha256(payload.encode()).hexdigest()
+
+    def _build_structured_proof(
+        self,
+        task: RealPoUWTask,
+        result: Any,
+        raw_proof: str,
+        execution_time: float,
+    ) -> str:
+        """构建不可伪造导向的结构化证明，保留 raw_proof 兼容旧链路。"""
+        input_view = dict(task.params or {})
+        reveal_secret = input_view.pop("challenge_reveal", "")
+
+        proof_payload = {
+            "version": "pouw_proof_v2",
+            "task_id": task.task_id,
+            "task_type": task.task_type.value if hasattr(task.task_type, "value") else str(task.task_type),
+            "input_digest": self._digest_obj(input_view),
+            "challenge": task.params.get("challenge", ""),
+            "challenge_commitment": task.params.get("challenge_commitment", ""),
+            "challenge_reveal": reveal_secret,
+            "trace_digest": self._digest_obj({
+                "raw_proof": raw_proof,
+                "execution_ms": int(max(execution_time, 0.0) * 1000),
+                "difficulty": task.difficulty,
+                "threshold": task.expected_threshold,
+            }),
+            "output_digest": self._digest_obj(result),
+            "timestamp_ms": int(time.time() * 1000),
+            "window_start_ms": int(task.params.get("challenge_window_start_ms", 0) or 0),
+            "window_end_ms": int(task.params.get("challenge_window_end_ms", 0) or 0),
+            "raw_proof": raw_proof,
+        }
+
+        proof_hash_src = dict(proof_payload)
+        proof_payload["proof_hash"] = self._digest_obj(proof_hash_src)
+        return "proof_json=" + json.dumps(proof_payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+
     def generate_task(
         self,
         task_type: RealTaskType,
@@ -134,10 +180,27 @@ class PoUWExecutor:
         """
         with self._counter_lock:
             self._task_counter += 1
-            task_id = f"real_task_{self._task_counter:04d}"
+            entropy = kwargs.get("entropy") or (
+                f"{time.time_ns()}:{os.getpid()}:{secrets.token_hex(8)}:{self._task_counter}"
+            )
+            entropy_hash = hashlib.sha256(str(entropy).encode()).hexdigest()[:12]
+            task_id = f"real_task_{self._task_counter:04d}_{entropy_hash}"
 
         # 限制难度范围
         difficulty = max(1, min(10, difficulty))
+
+        task_seed = str(kwargs.get("task_seed", ""))
+        prev_hash = str(kwargs.get("prev_hash", ""))
+        block_height = int(kwargs.get("block_height", 0) or 0)
+        miner_id = str(kwargs.get("miner_id", ""))
+        challenge_window = int(kwargs.get("challenge_window", int(time.time() // 30)))
+        window_start_ms = int(kwargs.get("challenge_window_start_ms", challenge_window * 30000))
+        window_end_ms = int(kwargs.get("challenge_window_end_ms", window_start_ms + 30000))
+
+        challenge_material = f"{prev_hash}:{block_height}:{challenge_window}:{miner_id}:{task_type.value}:{task_seed}:{entropy_hash}"
+        challenge = hashlib.sha256(challenge_material.encode()).hexdigest()
+        challenge_reveal = secrets.token_hex(16)
+        challenge_commitment = hashlib.sha256(f"{challenge}:{challenge_reveal}".encode()).hexdigest()
 
         if task_type == RealTaskType.MATRIX_MULTIPLY:
             params, threshold = self._gen_matrix_multiply(difficulty)
@@ -149,7 +212,11 @@ class PoUWExecutor:
             params, threshold = self._gen_gradient_descent(difficulty)
 
         elif task_type == RealTaskType.HASH_SEARCH:
-            params, threshold = self._gen_hash_search(difficulty)
+            params, threshold = self._gen_hash_search(
+                difficulty,
+                task_seed=task_seed,
+                challenge=challenge,
+            )
 
         elif task_type == RealTaskType.CUSTOM_CODE:
             params, threshold = self._gen_custom_code(kwargs)
@@ -167,6 +234,18 @@ class PoUWExecutor:
             
         else:
             raise ValueError(f"Unknown task type: {task_type}")
+
+        params.update({
+            "challenge": challenge,
+            "challenge_commitment": challenge_commitment,
+            "challenge_reveal": challenge_reveal,
+            "challenge_window": challenge_window,
+            "challenge_window_start_ms": window_start_ms,
+            "challenge_window_end_ms": window_end_ms,
+            "challenge_context_hash": hashlib.sha256(
+                f"{prev_hash}:{block_height}:{challenge_window}:{miner_id}".encode()
+            ).hexdigest(),
+        })
 
         return RealPoUWTask(
             task_id=task_id,
@@ -213,11 +292,13 @@ class PoUWExecutor:
             "max_iterations": 100 * difficulty,
         }, 0.9
 
-    def _gen_hash_search(self, difficulty: int) -> Tuple[Dict, float]:
+    def _gen_hash_search(self, difficulty: int, task_seed: str = "", challenge: str = "") -> Tuple[Dict, float]:
         """生成哈希前缀搜索任务参数。"""
         prefix_len = min(difficulty + 1, 4)
         prefix = "0" * prefix_len
-        data = f"block_data_{self._task_counter}"
+        seed_material = task_seed or secrets.token_hex(12)
+        random_seed = hashlib.sha256(f"{seed_material}:{challenge}:{self._task_counter}".encode()).hexdigest()
+        data = f"block_data_{random_seed[:24]}"
         return {
             "data": data,
             "prefix": prefix,
@@ -315,6 +396,7 @@ class PoUWExecutor:
         execution_time = time.perf_counter() - start_time
         effective_threshold = max(task.expected_threshold, self.min_score_threshold)
         verified = score >= effective_threshold
+        structured_proof = self._build_structured_proof(task, result, str(proof), execution_time)
 
         return RealPoUWResult(
             task_id=task.task_id,
@@ -323,7 +405,7 @@ class PoUWExecutor:
             score=score,
             execution_time=execution_time,
             verified=verified,
-            computation_proof=proof,
+            computation_proof=structured_proof,
         )
 
     def _validate_task(self, task: RealPoUWTask) -> bool:
@@ -894,6 +976,36 @@ class PoUWExecutor:
             return False
 
         # 针对特定任务类型的额外验证
+        structured_payload = None
+        if isinstance(result.computation_proof, str) and result.computation_proof.startswith("proof_json="):
+            try:
+                structured_payload = json.loads(result.computation_proof[len("proof_json="):])
+            except Exception:
+                return False
+
+            required = {
+                "task_id", "task_type", "input_digest", "challenge", "challenge_commitment",
+                "challenge_reveal", "trace_digest", "output_digest", "timestamp_ms", "proof_hash"
+            }
+            if not required.issubset(set(structured_payload.keys())):
+                return False
+            if structured_payload.get("task_id") != task.task_id:
+                return False
+
+            # 最小可验证子集：校验 challenge 承诺关系。
+            reveal = structured_payload.get("challenge_reveal", "")
+            challenge = structured_payload.get("challenge", "")
+            commitment = structured_payload.get("challenge_commitment", "")
+            if challenge and reveal and commitment:
+                expected_commitment = hashlib.sha256(f"{challenge}:{reveal}".encode()).hexdigest()
+                if expected_commitment != commitment:
+                    return False
+
+            payload_copy = dict(structured_payload)
+            proof_hash = payload_copy.pop("proof_hash", "")
+            if self._digest_obj(payload_copy) != proof_hash:
+                return False
+
         if task.task_type == RealTaskType.HASH_SEARCH:
             if isinstance(result.result, dict) and result.result.get("hash"):
                 prefix = task.params["prefix"]

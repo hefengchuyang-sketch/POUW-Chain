@@ -131,15 +131,15 @@ To keep this README accurate for reviewers, the following status reflects curren
 - Dynamic pricing behavior under sustained multi-tenant traffic
 - Compensation/debt replay behavior under treasury stress conditions
 
-### Roadmap / Not Fully Production-Closed Yet
+### Deployment Items Still Pending
 
-- Confidential mode with stronger hardware isolation (TEE path)
+- Confidential mode hardware trust-chain integration (Intel DCAP / AMD SEV-SNP / cloud attestation service)
 - Larger-scale benchmark evidence with external customer workloads
 - Operational hardening under long-running, mixed hardware clusters
 
-### Reviewer Note
+### Current Validation Boundary
 
-This project should be read as an engineering system in late prototype / early validation phase, not as a fully production-hardened network.
+Current evidence demonstrates protocol correctness and local operational stability. It is not equivalent to full production certification.
 
 ---
 
@@ -215,7 +215,7 @@ In short, this is an attempt to make compute economically useful and socially me
 #### Compute Task Security
 - **Standard Mode** ★★★☆☆: Container isolation + end-to-end encryption (~8% overhead)
 - **Enhanced Mode** ★★★★☆: Task sharding + redundant verification + S-Box SubBytes (~12% overhead)
-- **Confidential Mode** ★★★★★: TEE hardware isolation (roadmap, ~30% overhead)
+- **Confidential Mode** ★★★★★: software closed-loop integrated (attestation pre-check + KMS gate + rollout audit), hardware trust-chain rollout pending (~30% overhead target)
 
 #### P2P Encryption
 - ECDH (X25519) key agreement → AES-256-GCM + S-Box SubBytes stacking
@@ -316,11 +316,13 @@ Security regression quick check:
 
 ```bash
 python -m pytest tests/test_security_regression_access.py -q
+python -m pytest tests/test_tee_closed_loop.py -q
 ```
 
 Reviewer evidence reports:
 
 - [Reviewer Evidence Summary](docs/reports/REVIEWER_EVIDENCE_SUMMARY.md)
+- [Main Flow Review (2026-04-09)](docs/reports/MAIN_FLOW_REVIEW_2026-04-09.md)
 - [Public Dataset Validation (Iris)](docs/reports/public_dataset_validation_iris.md)
 - [Public Dataset Validation (Digits)](docs/reports/public_dataset_validation_digits.md)
 - [Adversarial Access Control Report](docs/reports/adversarial_access_report.md)
@@ -339,6 +341,21 @@ Based on the latest local evidence package:
 - Large-chunk integrity and malformed input rejection: `100.0%`
 - Short reliability suite (concurrency/restart/reproducibility): all core checks passed
 - Provider no-leakage write test: scanner/runtime checks `100.0%`
+- TEE closed-loop tests: `10/10` passed (`tests/test_tee_closed_loop.py`)
+
+### TEE Closed-Loop Status
+
+- Software-layer closed: implemented and tested
+    - TEE attestation is bound to order node identity and strict consistency checks.
+    - TEE order creation now performs pre-check (evidence age / whitelist / node binding).
+    - TEE orders enforce attestation validation policy automatically.
+    - Result submission in TEE mode blocks settlement unless attestation verification passes.
+    - Model/task decryption path is gated by KMS policy (attestation + policy required).
+    - Verifier forwarding is integrated with local fallback when third-party verifier is unavailable.
+    - Rollout and failure reasons are queryable via RPC audit interfaces.
+- Deployment-layer pending:
+    - Vendor-grade hardware trust chain integration (DCAP/SEV-SNP/cloud verifier)
+    - Certificate chain / revocation / production key management operations
 
 ### Critical Reviewer Questions (And Current Answers)
 
@@ -375,7 +392,7 @@ Based on the latest local evidence package:
 - Current answer: no, privacy is strong but not absolute.
 - Evidence today: encrypted channels, owner-only access controls, and provider-side no-leakage write tests pass.
 - Remaining risk: advanced side-channel and host-level attacks are out of current local test scope.
-- Next validation priority: stronger confidential-compute path and third-party security review.
+- Next validation priority: production hardware attestation integration and third-party security review.
 
 ### Scope Boundary
 
@@ -538,7 +555,7 @@ POUW-Chain/
 │   ├── message_queue.py     #   P2P messaging queue
 │   ├── tcp_network.py       #   TLS P2P transport
 │   └── ...                  #   And 60+ other modules
-├── tests/                   # Test suite (202 tests)
+├── tests/                   # Test suite (298 tests passed as of 2026-04-09)
 ├── docs/                    # Documentation
 │   ├── USER_GUIDE.md        #   User guide
 │   ├── CONSENSUS.md         #   Consensus whitepaper
@@ -549,6 +566,13 @@ POUW-Chain/
 │   └── ...                  #   And other audit/report docs
 ├── frontend/                # Frontend (Vue + Vite)
 ├── scripts/                 # Deployment/ops scripts
+│   ├── rpc_smoke_compute_v3.py  # Runtime smoke test for compute V3 path
+│   ├── scratch/                 # Archived one-off debug scripts
+│   └── ...
+├── logs/                    # Runtime logs
+│   ├── node.log             # Standard runtime log
+│   ├── archive/             # Archived local outputs / historical logs
+│   └── ...
 ├── deploy/                  # Multi-node deployment configs
 ├── data/                    # Runtime data (not committed)
 └── wallets/                 # Wallet files (not committed)

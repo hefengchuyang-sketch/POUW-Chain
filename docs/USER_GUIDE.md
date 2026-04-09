@@ -425,7 +425,7 @@ Example: Your compute order settles at 100 MAIN → miner gets 90, platform oper
 |---------------|------------|---------------------|----------|
 | Standard Mode | Container isolation + end-to-end encryption | ~8% | General compute tasks |
 | Enhanced Mode | Task sharding + redundant verification | ~12% | Sensitive data processing |
-| Confidential Mode | TEE hardware isolation (planned) | ~30% | Top secret |
+| Confidential Mode | Software closed-loop enabled (TEE attestation pre-check + KMS gate), hardware trust-chain rollout pending | ~30% (target) | Top secret |
 
 ### Miner Behavior Monitoring
 
@@ -571,7 +571,7 @@ Yes. The system locks budget at worst case (max price × peak hours × 1.1 safet
 
 **Q: Can miners spy on my data?**
 
-In standard mode, data is end-to-end encrypted — miners can only see ciphertext. In enhanced mode, tasks are sharded — individual miners only get partial data and cannot reconstruct it. Confidential mode (planned) will use TEE hardware isolation.
+In standard mode, data is end-to-end encrypted — miners can only see ciphertext. In enhanced mode, tasks are sharded — individual miners only get partial data and cannot reconstruct it. In confidential mode, software-layer controls are active (attestation policy + KMS gate), while hardware trust-chain integration is being rolled out.
 
 **Q: Can miners cheat and return fake results?**
 

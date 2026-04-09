@@ -591,6 +591,26 @@ class NodeRPCService:
             "获取链信息",
             RPCPermission.PUBLIC
         )
+        self.registry.register(
+            "chain_updateMechanismStrategy", self._chain_update_mechanism_strategy,
+            "更新机制策略（版本化/灰度/回滚）",
+            RPCPermission.ADMIN
+        )
+        self.registry.register(
+            "sbox_getEncryptionPolicy", self._sbox_get_encryption_policy,
+            "获取 S-Box 加密治理策略",
+            RPCPermission.PUBLIC
+        )
+        self.registry.register(
+            "sbox_setEncryptionPolicy", self._sbox_set_encryption_policy,
+            "设置 S-Box 加密治理策略",
+            RPCPermission.ADMIN
+        )
+        self.registry.register(
+            "sbox_getDowngradeAudit", self._sbox_get_downgrade_audit,
+            "查询 S-Box 降级审计事件",
+            RPCPermission.PUBLIC
+        )
         
         # === 账户 (PUBLIC 查询) ===
         self.registry.register(
@@ -754,6 +774,21 @@ class NodeRPCService:
             "compute_completeOrder", self._compute_complete_order,
             "完成算力订单并提交结果",
             RPCPermission.USER
+        )
+        self.registry.register(
+            "compute_commitResult", self._compute_commit_result,
+            "提交订单结果承诺哈希",
+            RPCPermission.USER
+        )
+        self.registry.register(
+            "compute_revealResult", self._compute_reveal_result,
+            "提交订单结果明文摘要并结算",
+            RPCPermission.USER
+        )
+        self.registry.register(
+            "compute_getOrderEvents", self._compute_get_order_events,
+            "获取订单生命周期交易事件",
+            RPCPermission.PUBLIC
         )
         self.registry.register(
             "compute_cancelOrder", self._compute_cancel_order,
@@ -1252,6 +1287,16 @@ class NodeRPCService:
             "tee_getPricing", self._tee_get_pricing,
             "获取 TEE 定价信息",
             RPCPermission.PUBLIC
+        )
+        self.registry.register(
+            "tee_getRolloutAudit", self._tee_get_rollout_audit,
+            "获取 TEE 灰度审计事件",
+            RPCPermission.ADMIN
+        )
+        self.registry.register(
+            "tee_getKmsAudit", self._tee_get_kms_audit,
+            "获取 TEE KMS gate 审计日志",
+            RPCPermission.ADMIN
         )
         
         # === 算力市场订单簿接===
@@ -2376,10 +2421,13 @@ class NodeRPCService:
                 chain_info = self.consensus_engine.get_chain_info()
                 selected_dist = chain_info.get("consensus_selected_distribution")
                 mined_dist = chain_info.get("consensus_mined_distribution")
+                mechanism_strategy = chain_info.get("mechanism_strategy")
                 if selected_dist is not None:
                     result["consensusSelectedDistribution"] = selected_dist
                 if mined_dist is not None:
                     result["consensusMinedDistribution"] = mined_dist
+                if mechanism_strategy is not None:
+                    result["mechanismStrategy"] = mechanism_strategy
             except Exception:
                 pass
 
@@ -2397,6 +2445,104 @@ class NodeRPCService:
             except ImportError:
                 pass
         return result
+
+    def _chain_update_mechanism_strategy(self,
+                                         version: str = None,
+                                         rollout: str = None,
+                                         mode: str = None,
+                                         sbox_ratio: float = None,
+                                         sbox_enabled: bool = None,
+                                         work_threshold: float = None,
+                                         max_ratio_step: float = None,
+                                         rollbackToPrevious: bool = False,
+                                         **kwargs) -> Dict:
+        """更新机制策略（版本化参数 + 灰度 + 回滚）。"""
+        if not self.consensus_engine or not hasattr(self.consensus_engine, "configure_mechanism_strategy"):
+            return {
+                "status": "failed",
+                "message": "consensus_engine_unavailable",
+            }
+
+        actor = kwargs.get("auth_context", {}).get("user", "rpc_admin")
+        strategy = self.consensus_engine.configure_mechanism_strategy(
+            actor_id=actor,
+            rollback_to_previous=bool(rollbackToPrevious),
+            version=version,
+            rollout=rollout,
+            mode=mode,
+            sbox_ratio=sbox_ratio,
+            sbox_enabled=sbox_enabled,
+            work_threshold=work_threshold,
+            max_ratio_step=max_ratio_step,
+        )
+        return {
+            "status": "success",
+            "strategy": strategy,
+        }
+
+    def _sbox_get_encryption_policy(self, **kwargs) -> Dict:
+        """获取 S-Box 加密策略。"""
+        try:
+            from core.sbox_crypto import get_sbox_encryption_policy
+            return {
+                "status": "success",
+                "policy": get_sbox_encryption_policy(),
+            }
+        except Exception as e:
+            return {
+                "status": "failed",
+                "message": f"policy_unavailable:{type(e).__name__}",
+            }
+
+    def _sbox_set_encryption_policy(self,
+                                    policyVersion: str = None,
+                                    defaultLevel: str = None,
+                                    enforceEnhancedDefault: bool = None,
+                                    allowDowngradeToStandard: bool = None,
+                                    downgradeRequiresAudit: bool = None,
+                                    maxSessionMessages: int = None,
+                                    maxSessionSeconds: int = None,
+                                    **kwargs) -> Dict:
+        """设置 S-Box 加密策略。"""
+        try:
+            from core.sbox_crypto import set_sbox_encryption_policy
+            policy = set_sbox_encryption_policy(
+                policyVersion=policyVersion,
+                defaultLevel=defaultLevel,
+                enforceEnhancedDefault=enforceEnhancedDefault,
+                allowDowngradeToStandard=allowDowngradeToStandard,
+                downgradeRequiresAudit=downgradeRequiresAudit,
+                maxSessionMessages=maxSessionMessages,
+                maxSessionSeconds=maxSessionSeconds,
+            )
+            return {
+                "status": "success",
+                "policy": policy,
+            }
+        except Exception as e:
+            return {
+                "status": "failed",
+                "message": f"policy_update_failed:{type(e).__name__}:{e}",
+            }
+
+    def _sbox_get_downgrade_audit(self, limit: int = 200, **kwargs) -> Dict:
+        """查询 S-Box 降级审计事件。"""
+        try:
+            from core.sbox_crypto import get_sbox_downgrade_audit
+            n = max(1, min(int(limit), 5000))
+            events = get_sbox_downgrade_audit(n)
+            return {
+                "status": "success",
+                "events": events,
+                "total": len(events),
+            }
+        except Exception as e:
+            return {
+                "status": "failed",
+                "events": [],
+                "total": 0,
+                "message": f"audit_unavailable:{type(e).__name__}",
+            }
     
     # ============== 账户方法 ==============
     
@@ -4760,6 +4906,73 @@ class NodeRPCService:
                                program: str = "", free_order: bool = False,
                                buyer_address: str = None, **kwargs) -> Dict:
         """提交算力订单"""
+        # 默认优先走 ComputeMarketV3，旧 market_orders 逻辑仅做兼容兜底。
+        if self.compute_market and hasattr(self.compute_market, "create_order"):
+            try:
+                from .compute_market_v3 import TaskExecutionMode
+
+                execution_mode_raw = str(
+                    kwargs.get("executionMode", kwargs.get("execution_mode", "normal"))
+                ).lower()
+                if execution_mode_raw == "tee":
+                    execution_mode = TaskExecutionMode.TEE
+                elif execution_mode_raw == "zk":
+                    execution_mode = TaskExecutionMode.ZK
+                else:
+                    execution_mode = TaskExecutionMode.NORMAL
+
+                sector = kwargs.get("sector") or gpu_type or "RTX3080"
+                buyer = buyer_address or kwargs.get('buyer_address') or self.miner_address or f"buyer_{self.node_id}"
+                unit_price = 0.0 if (free_order or kwargs.get('free_order', False)) else max(0.0, float(price_per_hour or 0.0))
+                gpu_count = max(1, int(gpu_count or 1))
+                duration_hours = max(1, int(duration_hours or kwargs.get('duration_hours', 1) or 1))
+
+                task_hash = kwargs.get("task_hash") or kwargs.get("taskHash")
+                if not task_hash:
+                    task_payload = {
+                        "program": program,
+                        "gpu_type": gpu_type,
+                        "gpu_count": gpu_count,
+                        "duration_hours": duration_hours,
+                        "price_per_hour": unit_price,
+                        "buyer": buyer,
+                    }
+                    task_hash = hashlib.sha256(
+                        json.dumps(task_payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
+                    ).hexdigest()
+
+                order, msg = self.compute_market.create_order(
+                    buyer_address=buyer,
+                    sector=str(sector),
+                    gpu_count=gpu_count,
+                    duration_hours=duration_hours,
+                    max_price=unit_price,
+                    task_hash=str(task_hash),
+                    task_encrypted_blob=str(kwargs.get("taskEncryptedBlob", kwargs.get("task_encrypted_blob", ""))),
+                    execution_mode=execution_mode,
+                    allow_validation=bool(kwargs.get("allowValidation", kwargs.get("allow_validation", True))),
+                    tee_node_id=str(kwargs.get("teeNodeId", kwargs.get("tee_node_id", ""))),
+                    tee_attestation=kwargs.get("teeAttestation", kwargs.get("tee_attestation", {})) or {},
+                )
+                if order:
+                    return {
+                        "orderId": order.order_id,
+                        "status": order.status.value,
+                        "buyerAddress": order.buyer_address,
+                        "sector": order.sector,
+                        "gpuCount": order.gpu_count,
+                        "durationHours": order.duration_hours,
+                        "maxPrice": order.max_price,
+                        "totalPrice": order.total_budget,
+                        "executionMode": order.execution_mode.value,
+                        "message": msg,
+                        "createdAt": int(order.created_at),
+                        "path": "compute_market_v3",
+                    }
+            except Exception:
+                # 发生异常时自动回退旧路径，保证兼容性。
+                pass
+
         if not hasattr(self, "_demo_main_balances"):
             self._demo_main_balances = {}
 
@@ -4854,10 +5067,46 @@ class NodeRPCService:
         """获取订单详情"""
         if not order_id:
             return None
+
+        if self.compute_market and hasattr(self.compute_market, "get_order"):
+            try:
+                order = self.compute_market.get_order(order_id)
+                if order:
+                    data = order.to_dict()
+                    data.update({
+                        "orderId": order.order_id,
+                        "buyerAddress": order.buyer_address,
+                        "gpuType": order.sector,
+                        "gpuCount": order.gpu_count,
+                        "durationHours": order.duration_hours,
+                        "pricePerHour": order.max_price,
+                        "totalPrice": order.total_budget,
+                        "status": order.status.value,
+                        "path": "compute_market_v3",
+                    })
+                    return data
+            except Exception:
+                pass
+
         return self.market_orders.get(order_id)
     
     def _compute_get_market(self, gpu_type: str = None, **kwargs) -> Dict:
         """获取市场信息 - 真实数据"""
+        if self.compute_market and hasattr(self.compute_market, "get_market_stats"):
+            try:
+                sector = kwargs.get("sector") or gpu_type
+                stats = self.compute_market.get_market_stats(sector=sector)
+                return {
+                    "orders": [],
+                    "total": stats.get("active_orders", 0),
+                    "totalCapacity": stats.get("total_gpus", 0),
+                    "available": stats.get("available_gpus", 0),
+                    "v3": stats,
+                    "path": "compute_market_v3",
+                }
+            except Exception:
+                pass
+
         orders = list(self.market_orders.values())
         
         if gpu_type:
@@ -4872,6 +5121,28 @@ class NodeRPCService:
     
     def _compute_accept_order(self, order_id: str, task_id: str = None, **kwargs) -> Dict:
         """接受算力订单"""
+        if self.compute_market and hasattr(self.compute_market, "start_execution") and hasattr(self.compute_market, "get_order"):
+            try:
+                v3_order = self.compute_market.get_order(order_id)
+                if v3_order:
+                    miner_identity = (
+                        kwargs.get("miner_id")
+                        or kwargs.get("miner_address")
+                        or self.miner_address
+                        or f"miner_{self.node_id}"
+                    )
+                    ok, msg = self.compute_market.start_execution(order_id, miner_identity)
+                    return {
+                        "status": "success" if ok else "failed",
+                        "orderId": order_id,
+                        "taskId": task_id or f"task_{order_id}",
+                        "acceptedBy": miner_identity,
+                        "message": msg,
+                        "path": "compute_market_v3",
+                    }
+            except Exception:
+                pass
+
         if not order_id or order_id not in self.market_orders:
             raise RPCError(RPCErrorCode.INVALID_PARAMS.value, f"订单不存在 {order_id}")
         
@@ -4997,6 +5268,49 @@ class NodeRPCService:
 
     def _compute_complete_order(self, order_id: str, result_data: str = "", task_id: str = None, **kwargs) -> Dict:
         """完成算力订单并回填结果给下单账户（Demo 流程）"""
+        if self.compute_market and hasattr(self.compute_market, "submit_result") and hasattr(self.compute_market, "get_order"):
+            try:
+                v3_order = self.compute_market.get_order(order_id)
+                if v3_order:
+                    miner_identity = (
+                        kwargs.get("miner_id")
+                        or kwargs.get("miner_address")
+                        or self.miner_address
+                        or (v3_order.assigned_miners[0] if v3_order.assigned_miners else "")
+                    )
+                    if not miner_identity:
+                        return {
+                            "status": "failed",
+                            "orderId": order_id,
+                            "message": "miner_identity_required",
+                            "path": "compute_market_v3",
+                        }
+
+                    result_hash = kwargs.get("result_hash") or kwargs.get("resultHash")
+                    if not result_hash:
+                        result_hash = hashlib.sha256(
+                            (result_data or f"result::{order_id}").encode("utf-8")
+                        ).hexdigest()
+
+                    result_encrypted = kwargs.get("result_encrypted", kwargs.get("resultEncrypted", ""))
+                    ok, msg = self.compute_market.submit_result(
+                        order_id,
+                        miner_identity,
+                        result_hash,
+                        result_encrypted,
+                    )
+                    return {
+                        "status": "success" if ok else "failed",
+                        "orderId": order_id,
+                        "taskId": task_id or f"task_{order_id}",
+                        "acceptedBy": miner_identity,
+                        "resultHash": result_hash,
+                        "message": msg,
+                        "path": "compute_market_v3",
+                    }
+            except Exception:
+                pass
+
         if not order_id or order_id not in self.market_orders:
             raise RPCError(RPCErrorCode.INVALID_PARAMS.value, f"订单不存在 {order_id}")
 
@@ -5115,9 +5429,80 @@ class NodeRPCService:
             "execution": execution_info,
             "message": "订单已完成，结果已回传下单账户",
         }
+
+    def _compute_commit_result(self,
+                               order_id: str,
+                               miner_id: str,
+                               commit_hash: str,
+                               **kwargs) -> Dict:
+        """提交订单结果承诺哈希（ComputeMarketV3）。"""
+        if self.compute_market and hasattr(self.compute_market, "commit_result"):
+            ok, msg = self.compute_market.commit_result(order_id, miner_id, commit_hash)
+            return {
+                "status": "success" if ok else "failed",
+                "orderId": order_id,
+                "minerId": miner_id,
+                "message": msg,
+            }
+        return {
+            "status": "failed",
+            "orderId": order_id,
+            "message": "compute_market_commit_unavailable",
+        }
+
+    def _compute_reveal_result(self,
+                               order_id: str,
+                               miner_id: str,
+                               result_hash: str,
+                               result_encrypted: str = "",
+                               **kwargs) -> Dict:
+        """提交订单结果 reveal 并触发结算（ComputeMarketV3）。"""
+        if self.compute_market and hasattr(self.compute_market, "reveal_result"):
+            ok, msg = self.compute_market.reveal_result(
+                order_id,
+                miner_id,
+                result_hash,
+                result_encrypted,
+            )
+            return {
+                "status": "success" if ok else "failed",
+                "orderId": order_id,
+                "minerId": miner_id,
+                "message": msg,
+            }
+        return {
+            "status": "failed",
+            "orderId": order_id,
+            "message": "compute_market_reveal_unavailable",
+        }
+
+    def _compute_get_order_events(self, order_id: str, limit: int = 100, **kwargs) -> Dict:
+        """查询订单生命周期交易事件（ComputeMarketV3）。"""
+        if self.compute_market and hasattr(self.compute_market, "get_order_events"):
+            events = self.compute_market.get_order_events(order_id, limit)
+            return {
+                "status": "success",
+                "orderId": order_id,
+                "events": events,
+                "total": len(events),
+            }
+        return {
+            "status": "failed",
+            "orderId": order_id,
+            "events": [],
+            "total": 0,
+            "message": "compute_market_events_unavailable",
+        }
     
     def _compute_cancel_order(self, order_id: str, **kwargs) -> Dict:
         """取消算力订单（需验证所有权）"""
+        if self.compute_market and hasattr(self.compute_market, "cancel_order"):
+            requester = kwargs.get("buyer_address") or self.miner_address or ""
+            reason = kwargs.get("reason", "")
+            ok, msg = self.compute_market.cancel_order(order_id, requester=requester, reason=reason)
+            if ok:
+                return {"status": "success", "orderId": order_id, "message": msg}
+
         if not order_id or order_id not in self.market_orders:
             raise RPCError(RPCErrorCode.INVALID_PARAMS.value, f"订单不存在 {order_id}")
         
@@ -8036,7 +8421,7 @@ class NodeRPCService:
         node = system["tee_manager"].register_tee_node(
             node_id=nodeId,
             tee_type=tee_enum,
-            capabilities=capabilities or {}
+            capabilities=capabilities or {},
         )
         
         return {
@@ -8055,26 +8440,73 @@ class NodeRPCService:
         **kwargs
     ) -> Dict:
         """提交 TEE 认证报告"""
-        from .tee_computing import AttestationReport
-        
         system = self._get_tee_system()
-        
-        report = AttestationReport(
-            report_id=f"report_{uuid.uuid4().hex[:8]}",
+
+        # 兼容两种输入：
+        # 1) reportData 为 JSON（包含 mrenclave/mrsigner）
+        # 2) reportData 为普通字符串（自动派生占位测量值）
+        parsed = None
+        try:
+            parsed = json.loads(reportData) if isinstance(reportData, str) else None
+        except Exception:
+            parsed = None
+
+        mrenclave = ""
+        mrsigner = ""
+        if isinstance(parsed, dict):
+            mrenclave = str(parsed.get("mrenclave") or parsed.get("mr_enclave") or "")
+            mrsigner = str(parsed.get("mrsigner") or parsed.get("mr_signer") or "")
+
+        if len(mrenclave) < 64:
+            mrenclave = hashlib.sha256(f"{nodeId}:{reportData}:mrenclave".encode()).hexdigest()
+        if len(mrsigner) < 64:
+            mrsigner = hashlib.sha256(f"{nodeId}:mrsigner".encode()).hexdigest()
+
+        platformInfo = platformInfo or {}
+        provider = str(platformInfo.get("provider", "local")).strip() or "local"
+        evidence_type = str(platformInfo.get("evidenceType", platformInfo.get("evidence_type", "report"))).strip() or "report"
+        cert_chain_hash = str(platformInfo.get("certChainHash", platformInfo.get("cert_chain_hash", ""))).strip()
+        tcb_status = str(platformInfo.get("tcbStatus", platformInfo.get("tcb_status", "unknown"))).strip() or "unknown"
+        try:
+            measurement_ts = float(platformInfo.get("measurementTs", platformInfo.get("measurement_ts", 0)) or 0)
+        except Exception:
+            measurement_ts = 0.0
+
+        quote = b""
+        if signature:
+            try:
+                sig_bytes = bytes.fromhex(signature)
+                quote = reportData.encode("utf-8") + sig_bytes
+            except Exception:
+                quote = b""
+
+        report = system["tee_manager"].submit_attestation(
             node_id=nodeId,
+            mrenclave=mrenclave,
+            mrsigner=mrsigner,
+            quote=quote,
             report_data=reportData,
-            signature=signature,
-            platform_info=platformInfo or {},
-            timestamp=time.time()
+            provider=provider,
+            evidence_type=evidence_type,
+            cert_chain_hash=cert_chain_hash,
+            tcb_status=tcb_status,
+            measurement_ts=measurement_ts,
         )
-        
-        success = system["tee_manager"].submit_attestation(nodeId, report)
-        
+
         return {
-            "success": success,
+            "success": bool(report and report.is_valid),
             "reportId": report.report_id,
             "nodeId": nodeId,
-            "verifiedAt": time.time() if success else None,
+            "verifiedAt": report.verified_at if report.is_valid else None,
+            "isValid": report.is_valid,
+            "expiry": report.expiry,
+            "reportHash": report.report_hash,
+            "provider": report.provider,
+            "evidenceType": report.evidence_type,
+            "certChainHash": report.cert_chain_hash,
+            "tcbStatus": report.tcb_status,
+            "measurementTs": report.measurement_ts,
+            "verifiedBy": report.verified_by,
         }
     
     def _tee_get_node_info(self, nodeId: str, **kwargs) -> Optional[Dict]:
@@ -8093,6 +8525,11 @@ class NodeRPCService:
             "attestation": {
                 "reportId": node.attestation_report.report_id if node.attestation_report else None,
                 "lastVerified": node.last_attestation_time,
+                "provider": node.attestation_report.provider if node.attestation_report else None,
+                "evidenceType": node.attestation_report.evidence_type if node.attestation_report else None,
+                "certChainHash": node.attestation_report.cert_chain_hash if node.attestation_report else None,
+                "tcbStatus": node.attestation_report.tcb_status if node.attestation_report else None,
+                "measurementTs": node.attestation_report.measurement_ts if node.attestation_report else None,
             } if node.attestation_report else None,
             "registeredAt": node.registration_time,
         }
@@ -8145,7 +8582,7 @@ class NodeRPCService:
         **kwargs
     ) -> Dict:
         """创建机密任务"""
-        from .tee_computing import VerificationLevel
+        from .tee_computing import VerificationLevel, TEEType
         
         system = self._get_tee_system()
         
@@ -8154,18 +8591,28 @@ class NodeRPCService:
         except KeyError:
             level = VerificationLevel.STANDARD
         
+        required_types = []
+        if requiredTeeType:
+            try:
+                required_types = [TEEType[requiredTeeType.upper()]]
+            except KeyError:
+                required_types = []
+
+        auth_context = kwargs.get("auth_context", {})
+        user_id = self._get_auth_user(auth_context, default="anonymous")
+
         task = system["verifiable_engine"].create_confidential_task(
-            task_id=taskId,
-            code=code,
-            input_data=inputData,
+            user_id=user_id,
+            confidential_execution=True,
+            required_tee_types=required_types,
             verification_level=level,
-            required_tee_type=requiredTeeType
         )
         
         return {
             "taskId": task.task_id,
             "status": task.status,
             "verificationLevel": level.name,
+            "requestedTaskId": taskId,
             "createdAt": time.time(),
         }
 
@@ -8233,26 +8680,14 @@ class NodeRPCService:
     def _tee_get_pricing(self, gpuType: str = "RTX4090", **kwargs) -> Dict:
         """获取 TEE 定价信息"""
         try:
-            from .tee_computing import TEEType
+            from .tee_computing import TEEType, TEEManager
             
             system = self._get_tee_system()
-            pricing = system.get("tee_pricing")
-            
             base_price = 1.0  # 基础价格
             
             tee_prices = {}
             for tee_type in TEEType:
-                if pricing and hasattr(pricing, 'get_tee_premium'):
-                    premium = pricing.get_tee_premium(tee_type)
-                else:
-                    # 默认溢价
-                    default_premiums = {
-                        TEEType.NONE: 0,
-                        TEEType.INTEL_SGX: 0.15,
-                        TEEType.AMD_SEV: 0.12,
-                        TEEType.NVIDIA_CC: 0.20,
-                    }
-                    premium = default_premiums.get(tee_type, 0.10)
+                premium = TEEManager.TEE_PREMIUMS.get(tee_type, 0.10)
                 
                 tee_prices[tee_type.name] = {
                     "premium": premium,
@@ -8271,6 +8706,50 @@ class NodeRPCService:
                 "teePricing": {},
                 "error": "internal_error"
             }
+
+    def _tee_get_rollout_audit(self, limit: int = 100, **kwargs) -> Dict:
+        """获取 TEE 灰度策略审计事件。"""
+        if not self.compute_market or not hasattr(self.compute_market, "get_tee_rollout_audit"):
+            return {
+                "events": [],
+                "count": 0,
+                "message": "compute_market_or_audit_unavailable",
+            }
+
+        try:
+            n = int(limit)
+        except Exception:
+            n = 100
+        n = max(1, min(1000, n))
+        events = self.compute_market.get_tee_rollout_audit(n)
+        return {
+            "events": events,
+            "count": len(events),
+            "limit": n,
+        }
+
+    def _tee_get_kms_audit(self, limit: int = 100, **kwargs) -> Dict:
+        """获取 KMS gate 审计日志。"""
+        system = self._get_tee_system()
+        manager = system.get("tee_manager")
+        if not manager or not hasattr(manager, "get_kms_audit_log"):
+            return {
+                "events": [],
+                "count": 0,
+                "message": "kms_audit_unavailable",
+            }
+
+        try:
+            n = int(limit)
+        except Exception:
+            n = 100
+        n = max(1, min(1000, n))
+        events = manager.get_kms_audit_log(n)
+        return {
+            "events": events,
+            "count": len(events),
+            "limit": n,
+        }
     
     # ============== 订单簿方==============
     
@@ -11165,7 +11644,73 @@ class NodeRPCService:
         price: float = 0,
         **kwargs
     ) -> Dict:
-        """创建交易所订单 - 前端兼容方法"""
+        """创建交易所订单 - 前端兼容方法。
+
+        兼容两条路径：
+        1. 老版交易所下单（原样保留）
+        2. ComputeMarketV3 下单（含 TEE 参数透传）
+        """
+        # ---- ComputeMarketV3 路径 ----
+        sector = kwargs.get("sector")
+        gpu_count = kwargs.get("gpuCount", kwargs.get("gpu_count"))
+        duration_hours = kwargs.get("durationHours", kwargs.get("duration_hours"))
+        max_price = kwargs.get("maxPrice", kwargs.get("max_price", price))
+        task_hash = kwargs.get("taskHash", kwargs.get("task_hash"))
+
+        if self.compute_market and sector and gpu_count is not None and duration_hours is not None and task_hash:
+            try:
+                from .compute_market_v3 import TaskExecutionMode
+
+                execution_mode_raw = str(kwargs.get("executionMode", kwargs.get("execution_mode", "normal"))).lower()
+                if execution_mode_raw == "tee":
+                    execution_mode = TaskExecutionMode.TEE
+                elif execution_mode_raw == "zk":
+                    execution_mode = TaskExecutionMode.ZK
+                else:
+                    execution_mode = TaskExecutionMode.NORMAL
+
+                tee_attestation = kwargs.get("teeAttestation", kwargs.get("tee_attestation", {}))
+                if isinstance(tee_attestation, str):
+                    try:
+                        tee_attestation = json.loads(tee_attestation)
+                    except Exception:
+                        tee_attestation = {}
+
+                buyer_address = kwargs.get("buyerAddress", kwargs.get("buyer_address", self.node_id or "anonymous"))
+                order, msg = self.compute_market.create_order(
+                    buyer_address=buyer_address,
+                    sector=str(sector),
+                    gpu_count=int(gpu_count),
+                    duration_hours=int(duration_hours),
+                    max_price=float(max_price),
+                    task_hash=str(task_hash),
+                    task_encrypted_blob=str(kwargs.get("taskEncryptedBlob", kwargs.get("task_encrypted_blob", ""))),
+                    execution_mode=execution_mode,
+                    allow_validation=bool(kwargs.get("allowValidation", kwargs.get("allow_validation", True))),
+                    tee_node_id=str(kwargs.get("teeNodeId", kwargs.get("tee_node_id", ""))),
+                    tee_attestation=tee_attestation,
+                )
+                if not order:
+                    raise RPCError(RPCErrorCode.INVALID_PARAMS.value, msg)
+
+                return {
+                    "orderId": order.order_id,
+                    "status": order.status.value,
+                    "sector": order.sector,
+                    "gpuCount": order.gpu_count,
+                    "durationHours": order.duration_hours,
+                    "maxPrice": order.max_price,
+                    "executionMode": order.execution_mode.value,
+                    "teeNodeId": order.tee_node_id,
+                    "message": msg,
+                    "createdAt": int(order.created_at),
+                }
+            except RPCError:
+                raise
+            except Exception as e:
+                raise RPCError(RPCErrorCode.INTERNAL_ERROR.value, "compute_market_create_order_failed")
+
+        # ---- 老版交易所路径 ----
         order_id = str(uuid.uuid4())[:8]
         order = {
             "orderId": order_id,

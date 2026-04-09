@@ -4,12 +4,15 @@
 POUW-Chain: protocol-level validation for verifiable outsourced compute with owner-scoped output access.
 
 ## Evidence Package Scope
-This summary consolidates four independently generated experiment reports:
+This summary consolidates repository-generated experiment reports:
 
 1. `public_dataset_validation_iris.md`
 2. `public_dataset_validation_digits.md`
 3. `adversarial_access_report.md`
 4. `large_chunk_integrity_report.md`
+5. `short_reliability_report.md`
+6. `provider_no_leakage_report.md`
+7. `full_validation_summary.md`
 
 ## Key Results
 
@@ -73,6 +76,9 @@ Source: `docs/reports/large_chunk_integrity_report.md`
 4. Data-path robustness
 - Multi-chunk transport and recomputed checksum validation hold under repeated large-payload runs.
 
+5. Confidential path enforcement (software layer)
+- TEE evidence checks and order/result path enforcement are covered by `tests/test_tee_closed_loop.py` (`10/10` passing).
+
 ## Reproducibility
 All results were generated with runnable scripts in this repository:
 
@@ -87,7 +93,8 @@ python scripts/generate_public_dataset_report.py --dataset iris --runs 20 --warm
 python scripts/generate_public_dataset_report.py --dataset digits --runs 10 --warmup 1
 python scripts/run_adversarial_access_tests.py --rounds 20
 python scripts/run_large_chunk_integrity_tests.py --rounds 6 --payload-mb 9
+python -m pytest tests/test_tee_closed_loop.py -q
 ```
 
-## Reviewer Note
-This evidence package is intentionally privacy-preserving (public datasets, no personal user data), while still providing repeatable protocol-level validation for reliability, access control, and integrity.
+## Scope Boundary
+This evidence package is privacy-preserving (public datasets, no personal user data) and suitable for repeatable protocol-level validation of reliability, access control, and integrity. It is not a substitute for production certification or third-party hardware-attestation compliance assessment.

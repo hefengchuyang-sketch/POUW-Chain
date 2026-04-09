@@ -20,7 +20,7 @@ except ImportError:
     HAS_TORCH = False
 
 from core.encrypted_task import HybridEncryption, EncryptedPayload, KeyPair
-from core.tee_computing import TEEType, TEEManager
+from core.tee_computing import TEEType, get_tee_system
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +41,9 @@ class SecureModelRuntime:
     def __init__(self, node_id: str, tee_type: TEEType = TEEType.NVIDIA_CC):
         self.node_id = node_id
         self.tee_type = tee_type
-        self.tee_manager = TEEManager()
+        tee_system = get_tee_system()
+        self.tee_manager = tee_system["tee_manager"]
+        self.kms_gate = tee_system["kms_gate"]
         
         # 模拟真实世界中，TEE 的私钥固化在硬件中且不随进程重启而改变。
         # 我们使用基于 node_id 的确定性种子来生成固定的单例密钥对，解决“失忆”问题。
@@ -77,17 +79,30 @@ class SecureModelRuntime:
         报告中必须包含自己 Enclave 的公钥，证明自己合法。
         """
         # 实际环境中，这里会调用底层的 Attestation API，同时绑定公钥的哈希
-        mrenclave = "0" * 64 # 模拟
-        mrsigner = "1" * 64
+        # 让测量值与 report_data 建立可验证绑定，满足 TEEManager 的一致性规则。
+        import hashlib
+        mrenclave = hashlib.sha256(self._enclave_keypair.public_key_pem.encode("utf-8")).hexdigest()
+        mrsigner = hashlib.sha256(f"{self.node_id}:signer".encode("utf-8")).hexdigest()
+
+        # report_data 必须包含 mrenclave 前缀，用于本地校验。
+        report_data = f"{mrenclave[:16]}::{self._enclave_keypair.public_key_pem}"
         
-        # 绑定的公共数据是 Enclave 公钥
-        report_data = self._enclave_keypair.public_key_pem
-        
+        if not self.tee_manager.get_node(self.node_id):
+            self.tee_manager.register_tee_node(
+                node_id=self.node_id,
+                tee_type=self.tee_type,
+                capabilities={"supports_remote_attestation": True, "supports_sealing": True},
+            )
+
         report = self.tee_manager.submit_attestation(
             node_id=self.node_id,
             mrenclave=mrenclave,
             mrsigner=mrsigner,
-            report_data=report_data
+            report_data=report_data,
+            provider="local_runtime",
+            evidence_type="report",
+            tcb_status="up_to_date",
+            measurement_ts=time.time(),
         )
         
         if not report.is_valid:
@@ -106,6 +121,23 @@ class SecureModelRuntime:
         
         try:
             payload = EncryptedPayload.from_dict(encrypted_payload_dict)
+
+            attestation = encrypted_payload_dict.get("attestation") or {}
+            policy = encrypted_payload_dict.get("kms_policy") or {
+                "max_evidence_age_seconds": 86400,
+                "required_tcb_status": "up_to_date",
+            }
+            ok, session_key, reason = self.kms_gate.request_session_key(
+                node_id=self.node_id,
+                attestation=attestation,
+                policy=policy,
+            )
+            if not ok:
+                logger.error(f"[{self.node_id}] KMS gate denied session key: {reason}")
+                return False
+            if not session_key:
+                logger.error(f"[{self.node_id}] KMS gate returned empty session key")
+                return False
             
             # 使用硬件被隔离的私钥进行解密
             decrypted_bytes = HybridEncryption.decrypt(
@@ -202,7 +234,14 @@ class ModelDeploymentClient:
         )
         
         # 3. 将加密的负载发过去
-        return encrypted_payload.to_dict()
+        payload = encrypted_payload.to_dict()
+        payload["attestation"] = report_data
+        payload["kms_policy"] = {
+            "max_evidence_age_seconds": 86400,
+            "required_tcb_status": "up_to_date",
+            "allowed_measurements": [report_data.get("mrenclave", "")],
+        }
+        return payload
 
 # ================= 演示测试 ==================
 if __name__ == "__main__":

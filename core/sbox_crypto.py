@@ -76,6 +76,67 @@ class SBoxEncryptionLevel(Enum):
     MAXIMUM = "maximum"
 
 
+# ============== 机制策略与降级审计 ==============
+
+SBOX_MECHANISM_POLICY: Dict[str, Any] = {
+    "policyVersion": "v2.0",
+    "defaultLevel": SBoxEncryptionLevel.ENHANCED.value,
+    "enforceEnhancedDefault": True,
+    "allowDowngradeToStandard": True,
+    "downgradeRequiresAudit": True,
+    "maxSessionMessages": 1_000_000,
+    "maxSessionSeconds": 3600,
+}
+
+_SBOX_DOWNGRADE_AUDIT: List[Dict[str, Any]] = []
+
+
+def _audit_downgrade(reason: str, details: Optional[Dict[str, Any]] = None):
+    event = {
+        "ts": time.time(),
+        "reason": reason,
+        "details": details or {},
+        "policyVersion": SBOX_MECHANISM_POLICY.get("policyVersion", "unknown"),
+    }
+    _SBOX_DOWNGRADE_AUDIT.append(event)
+    if len(_SBOX_DOWNGRADE_AUDIT) > 5000:
+        del _SBOX_DOWNGRADE_AUDIT[:-5000]
+
+
+def get_sbox_encryption_policy() -> Dict[str, Any]:
+    return dict(SBOX_MECHANISM_POLICY)
+
+
+def set_sbox_encryption_policy(**kwargs) -> Dict[str, Any]:
+    if "policyVersion" in kwargs and kwargs["policyVersion"]:
+        SBOX_MECHANISM_POLICY["policyVersion"] = str(kwargs["policyVersion"])
+
+    if "defaultLevel" in kwargs and kwargs["defaultLevel"]:
+        lvl = str(kwargs["defaultLevel"]).lower().strip()
+        if lvl in {x.value for x in SBoxEncryptionLevel}:
+            SBOX_MECHANISM_POLICY["defaultLevel"] = lvl
+
+    for b in ("enforceEnhancedDefault", "allowDowngradeToStandard", "downgradeRequiresAudit"):
+        if b in kwargs and kwargs[b] is not None:
+            SBOX_MECHANISM_POLICY[b] = bool(kwargs[b])
+
+    if "maxSessionMessages" in kwargs and kwargs["maxSessionMessages"] is not None:
+        SBOX_MECHANISM_POLICY["maxSessionMessages"] = int(max(1000, kwargs["maxSessionMessages"]))
+    if "maxSessionSeconds" in kwargs and kwargs["maxSessionSeconds"] is not None:
+        SBOX_MECHANISM_POLICY["maxSessionSeconds"] = int(max(60, kwargs["maxSessionSeconds"]))
+
+    return get_sbox_encryption_policy()
+
+
+def get_sbox_downgrade_audit(limit: int = 200) -> List[Dict[str, Any]]:
+    n = max(1, min(int(limit), 5000))
+    return list(_SBOX_DOWNGRADE_AUDIT[-n:])
+
+
+def clear_sbox_downgrade_audit():
+    _SBOX_DOWNGRADE_AUDIT.clear()
+
+
 # ============== 加密包头 ==============
 
 # 包头格式 (固定 32 字节):
@@ -171,6 +232,16 @@ def sbox_encrypt(
 
     # 获取 S-Box
     sbox_hash_hex = ""
+
+    # 治理策略：默认优先 ENHANCED。
+    if level is None:
+        try:
+            level = SBoxEncryptionLevel(SBOX_MECHANISM_POLICY.get("defaultLevel", SBoxEncryptionLevel.ENHANCED.value))
+        except Exception:
+            level = SBoxEncryptionLevel.ENHANCED
+    if SBOX_MECHANISM_POLICY.get("enforceEnhancedDefault", True) and level == SBoxEncryptionLevel.STANDARD:
+        level = SBoxEncryptionLevel.ENHANCED
+
     if level != SBoxEncryptionLevel.STANDARD:
         if sbox is None:
             # 尝试使用全网当前活跃 S-Box
@@ -180,8 +251,15 @@ def sbox_encrypt(
                 sbox = current.sbox
                 sbox_hash_hex = current.sbox_hash
             else:
-                # 没有活跃 S-Box，降级为 STANDARD
+                # 没有活跃 S-Box：按治理策略决定是否允许降级。
+                if not SBOX_MECHANISM_POLICY.get("allowDowngradeToStandard", True):
+                    raise ValueError("S-Box unavailable and downgrade is disabled by policy")
                 level = SBoxEncryptionLevel.STANDARD
+                if SBOX_MECHANISM_POLICY.get("downgradeRequiresAudit", True):
+                    _audit_downgrade(
+                        "sbox_unavailable_fallback_standard",
+                        {"requestedLevel": "enhanced_or_maximum"},
+                    )
                 logger.warning("No active S-Box available, falling back to STANDARD encryption")
         else:
             sbox_hash_hex = hashlib.sha256(bytes(sbox)).hexdigest()
@@ -385,36 +463,59 @@ class SBoxSessionCipher:
     def __init__(
         self,
         session_key: bytes,
-        level: SBoxEncryptionLevel = SBoxEncryptionLevel.ENHANCED,
+        level: Optional[SBoxEncryptionLevel] = None,
         sbox: List[int] = None,
         lock_sbox: bool = True,
     ):
         if len(session_key) != 32:
             raise ValueError("Session key must be 32 bytes")
         self._key = session_key
-        self._level = level
+        if level is None:
+            try:
+                self._level = SBoxEncryptionLevel(SBOX_MECHANISM_POLICY.get("defaultLevel", SBoxEncryptionLevel.ENHANCED.value))
+            except Exception:
+                self._level = SBoxEncryptionLevel.ENHANCED
+        else:
+            self._level = level
+
+        if SBOX_MECHANISM_POLICY.get("enforceEnhancedDefault", True) and self._level == SBoxEncryptionLevel.STANDARD:
+            self._level = SBoxEncryptionLevel.ENHANCED
+
         self._send_counter: int = 0
         self._recv_counter: int = 0
-        self._max_messages: int = 1_000_000  # 100万消息后必须重新协商
+        self._max_messages: int = int(SBOX_MECHANISM_POLICY.get("maxSessionMessages", 1_000_000))
+        self._created_at = time.time()
+        self._max_session_seconds: int = int(SBOX_MECHANISM_POLICY.get("maxSessionSeconds", 3600))
+        self._sbox_block_height: int = 0
 
         # 快照 S-Box: 创建时锁定，整个会话期间不变
         if sbox is not None:
             self._sbox = list(sbox)
-        elif lock_sbox and level != SBoxEncryptionLevel.STANDARD:
+        elif lock_sbox and self._level != SBoxEncryptionLevel.STANDARD:
             lib = get_sbox_library()
             current = lib.current
             if current and current.sbox:
                 self._sbox = list(current.sbox)  # 快照拷贝
+                self._sbox_block_height = int(getattr(current, "block_height", 0) or 0)
             else:
+                if not SBOX_MECHANISM_POLICY.get("allowDowngradeToStandard", True):
+                    raise ValueError("S-Box unavailable and downgrade is disabled by policy")
                 self._sbox = None
                 self._level = SBoxEncryptionLevel.STANDARD
+                if SBOX_MECHANISM_POLICY.get("downgradeRequiresAudit", True):
+                    _audit_downgrade("session_cipher_init_without_sbox", {})
         else:
             self._sbox = None
 
+    def _ensure_session_valid(self):
+        if self._send_counter >= self._max_messages or self._recv_counter >= self._max_messages:
+            raise RuntimeError("Session key exhausted, re-negotiate required")
+        if (time.time() - self._created_at) >= self._max_session_seconds:
+            raise RuntimeError("Session lifetime exceeded, re-negotiate required")
+
     def encrypt(self, plaintext: bytes) -> bytes:
         """加密消息。使用会话创建时锁定的 S-Box。"""
-        if self._send_counter >= self._max_messages:
-            raise RuntimeError("Session key exhausted, re-negotiate required")
+        self._ensure_session_valid()
 
         encrypted = sbox_encrypt(plaintext, self._key, self._sbox, self._level)
         self._send_counter += 1
@@ -422,8 +523,7 @@ class SBoxSessionCipher:
 
     def decrypt(self, packet: bytes) -> bytes:
         """解密消息。"""
-        if self._recv_counter >= self._max_messages:
-            raise RuntimeError("Session key exhausted, re-negotiate required")
+        self._ensure_session_valid()
 
         decrypted = sbox_decrypt(packet, self._key, self._sbox)
         self._recv_counter += 1
@@ -444,6 +544,16 @@ class SBoxSessionCipher:
         if self._sbox:
             return hashlib.sha256(bytes(self._sbox)).hexdigest()
         return ""
+
+    @property
+    def session_metadata(self) -> Dict[str, Any]:
+        return {
+            "sbox_hash": self.sbox_hash_hex,
+            "sbox_block_height": self._sbox_block_height,
+            "level": self._level.value,
+            "policyVersion": SBOX_MECHANISM_POLICY.get("policyVersion", "unknown"),
+            "ageSeconds": int(time.time() - self._created_at),
+        }
 
     @property
     def messages_remaining(self) -> int:

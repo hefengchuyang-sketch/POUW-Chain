@@ -1,0 +1,69 @@
+# Local peer node config for development
+network:
+  type: mainnet
+  chain_id: 9333
+  p2p:
+    host: "0.0.0.0"
+    port: 9334
+    max_peers: 20
+    bootstrap_nodes:
+      - "127.0.0.1:9333"
+  rpc:
+    enabled: true
+    host: "127.0.0.1"
+    port: 8547
+    allowed_methods: []
+    cors_origins: ["http://localhost:8547", "http://127.0.0.1:8547"]
+    rate_limit: 200
+
+node:
+  id: "local-peer-2"
+  name: "POUW-Local-Peer-2"
+  sector: "auto"
+  role: full
+
+mining:
+  enabled: false
+  miner_address: ""
+  threads: 0
+
+storage:
+  data_dir: "./data_peer2"
+  backend: leveldb
+  block_cache_mb: 256
+  compression: true
+
+wallet:
+  wallet_dir: "./wallets_peer2"
+  auto_create: true
+  mnemonic_words: 12
+
+logging:
+  level: INFO
+  file: "./logs/node_peer2.log"
+  max_size_mb: 50
+  max_files: 5
+  console: true
+
+consensus:
+  mode: mixed
+  sbox_ratio: 0.50
+  sbox_enabled: true
+  target_block_time: 30
+  difficulty_adjustment_interval: 10
+  initial_difficulty: 4
+  base_reward: 50.0
+  treasury_rate: 0.03
+  halving_interval: 10000
+  max_block_size: 1048576
+  required_witnesses: 2
+
+api:
+  admin_key: ""
+  websocket: true
+  ws_port: 8548
+
+dev:
+  enabled: true
+  debug_rpc: true
+  simulated_latency: 0

@@ -869,6 +869,15 @@ class P2PNode:
         
         self.peers[peer.peer_info.node_id] = peer
         self.known_peers[peer.peer_info.node_id] = peer.peer_info
+
+        # 出站连接场景下，收到 ACK 后也要发起挑战，确保双向认证都能完成。
+        challenge_nonce = os.urandom(32).hex()
+        self._pending_challenges[peer.peer_info.node_id] = challenge_nonce
+        await peer.send(P2PMessage(
+            msg_type=MessageType.CHALLENGE,
+            sender_id=self.node_id,
+            payload={"nonce": challenge_nonce}
+        ))
         
         self.log(f"🤝 握手确认: {peer.peer_info.node_id}")
     

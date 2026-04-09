@@ -405,6 +405,71 @@ class DifficultyAdjuster:
         }
 
 
+class WorkDifficultyAdjuster:
+    """工作量难度调节器（双通道中的 work 通道）。"""
+
+    def __init__(
+        self,
+        target_block_time: float = 30.0,
+        adjustment_interval: int = 10,
+        min_threshold: float = 20.0,
+        max_threshold: float = 180.0,
+        max_step: float = 8.0,
+    ):
+        self.target_block_time = target_block_time
+        self.adjustment_interval = adjustment_interval
+        self.min_threshold = min_threshold
+        self.max_threshold = max_threshold
+        self.max_step = max_step
+
+        self.observations: deque = deque(maxlen=240)
+
+    def record_observation(
+        self,
+        mining_time: float,
+        avg_quality: float,
+        has_real_orders: bool,
+        hash_difficulty: int,
+    ):
+        self.observations.append({
+            "mining_time": float(max(mining_time, 0.0001)),
+            "avg_quality": float(max(avg_quality, 0.0)),
+            "has_real_orders": bool(has_real_orders),
+            "hash_difficulty": int(max(hash_difficulty, 1)),
+        })
+
+    def should_adjust(self, block_height: int) -> bool:
+        return block_height % self.adjustment_interval == 0 and len(self.observations) >= self.adjustment_interval
+
+    def calculate_new_threshold(self, current_threshold: float) -> float:
+        if len(self.observations) < self.adjustment_interval:
+            return float(current_threshold)
+
+        recent = list(self.observations)[-self.adjustment_interval:]
+        avg_time = sum(x["mining_time"] for x in recent) / len(recent)
+        avg_quality = sum(x["avg_quality"] for x in recent) / len(recent)
+        avg_hash_diff = sum(x["hash_difficulty"] for x in recent) / len(recent)
+        real_ratio = sum(1 for x in recent if x["has_real_orders"]) / len(recent)
+
+        # 目标：时间过快/质量过高/算力高时提高工作量门槛；反之降低。
+        time_factor = (self.target_block_time / avg_time) if avg_time > 0 else 1.0
+        quality_factor = 1.0 + max(-0.2, min(0.2, (avg_quality - 70.0) / 250.0))
+        hash_factor = 1.0 + max(-0.15, min(0.15, (avg_hash_diff - 4.0) / 32.0))
+        demand_factor = 0.95 + 0.15 * real_ratio  # 真实订单占比高时略增门槛
+
+        desired = current_threshold * time_factor * quality_factor * hash_factor * demand_factor
+        desired = max(self.min_threshold, min(self.max_threshold, desired))
+
+        # 限速：每轮最多变化 max_step，抑制震荡。
+        delta = desired - current_threshold
+        if delta > self.max_step:
+            desired = current_threshold + self.max_step
+        elif delta < -self.max_step:
+            desired = current_threshold - self.max_step
+
+        return round(max(self.min_threshold, min(self.max_threshold, desired)), 2)
+
+
 class RewardCalculator:
     """奖励计算器。
     
@@ -504,6 +569,15 @@ class ConsensusEngine:
         
         # 组件
         self.difficulty_adjuster = DifficultyAdjuster()
+        self.work_difficulty_adjuster = WorkDifficultyAdjuster(
+            target_block_time=ChainParams.TARGET_BLOCK_TIME,
+            adjustment_interval=ChainParams.DIFFICULTY_ADJUSTMENT_INTERVAL,
+            min_threshold=20.0,
+            max_threshold=180.0,
+            max_step=8.0,
+        )
+        self.current_work_threshold = 50.0
+        self._idle_penalty_window = 6
         # 使用板块对应的基础奖励（而非默认 50）
         sector_base = ChainParams.get_sector_base_rewards().get(sector, 1.0)
         self.reward_calculator = RewardCalculator(base_reward=sector_base)
@@ -548,6 +622,15 @@ class ConsensusEngine:
         self._consensus_round = 0
         self._recent_consensus_selected = deque(maxlen=200)
         self._recent_consensus_mined = deque(maxlen=200)
+
+        # 机制策略（版本化 + 灰度/回滚）
+        self._mechanism_strategy = {
+            "version": "v2.0",
+            "rollout": "ga",
+            "max_ratio_step": 1.0,
+            "updated_at": time.time(),
+        }
+        self._strategy_history: List[Dict[str, Any]] = []
         
         # 线程安全锁 — 保护共享状态
         self._lock = threading.Lock()
@@ -1105,6 +1188,14 @@ class ConsensusEngine:
             mode = "mixed"
 
         ratio = max(0.0, min(1.0, float(sbox_ratio)))
+
+        # 治理保护：限制单次 ratio 变化幅度，防止参数瞬时漂移。
+        max_ratio_step = float(self._mechanism_strategy.get("max_ratio_step", 1.0))
+        if 0.0 < max_ratio_step < 1.0:
+            lower = max(0.0, self.consensus_sbox_ratio - max_ratio_step)
+            upper = min(1.0, self.consensus_sbox_ratio + max_ratio_step)
+            ratio = max(lower, min(upper, ratio))
+
         self.consensus_mode = mode
         self.consensus_sbox_ratio = ratio
         if sbox_enabled is not None:
@@ -1115,6 +1206,56 @@ class ConsensusEngine:
             f"sbox_ratio={self.consensus_sbox_ratio:.2f}, "
             f"sbox_enabled={self._sbox_mining_enabled}"
         )
+
+    def get_mechanism_strategy(self) -> Dict[str, Any]:
+        return dict(self._mechanism_strategy)
+
+    def configure_mechanism_strategy(
+        self,
+        actor_id: str = "system",
+        rollback_to_previous: bool = False,
+        **kwargs,
+    ) -> Dict[str, Any]:
+        """更新机制策略（版本化参数），支持一键回滚到上一版本。"""
+        if rollback_to_previous and self._strategy_history:
+            previous = self._strategy_history.pop()
+            self._mechanism_strategy = dict(previous)
+            self._mechanism_strategy["updated_at"] = time.time()
+            self.log(f"🔁 机制策略已回滚: by={actor_id}, version={self._mechanism_strategy.get('version')}")
+            return self.get_mechanism_strategy()
+
+        self._strategy_history.append(dict(self._mechanism_strategy))
+        if len(self._strategy_history) > 100:
+            self._strategy_history = self._strategy_history[-100:]
+
+        if kwargs.get("version"):
+            self._mechanism_strategy["version"] = str(kwargs["version"])
+        if kwargs.get("rollout"):
+            self._mechanism_strategy["rollout"] = str(kwargs["rollout"])
+        if kwargs.get("max_ratio_step") is not None:
+            mrs = float(kwargs["max_ratio_step"])
+            self._mechanism_strategy["max_ratio_step"] = max(0.01, min(1.0, mrs))
+
+        mode = kwargs.get("mode")
+        ratio = kwargs.get("sbox_ratio")
+        sbox_enabled = kwargs.get("sbox_enabled")
+        if mode is not None or ratio is not None or sbox_enabled is not None:
+            self.configure_consensus_mode(
+                mode=mode if mode is not None else self.consensus_mode,
+                sbox_ratio=float(ratio) if ratio is not None else self.consensus_sbox_ratio,
+                sbox_enabled=sbox_enabled,
+            )
+
+        if kwargs.get("work_threshold") is not None:
+            wt = float(kwargs["work_threshold"])
+            self.current_work_threshold = max(20.0, min(180.0, wt))
+
+        self._mechanism_strategy["updated_at"] = time.time()
+        self.log(
+            f"🧭 机制策略已更新: by={actor_id}, version={self._mechanism_strategy.get('version')}, "
+            f"rollout={self._mechanism_strategy.get('rollout')}"
+        )
+        return self.get_mechanism_strategy()
     
     def _auto_generate_pouw(self, count: int = 4):
         """自动生成基准 POUW 任务并执行。
@@ -1131,13 +1272,38 @@ class ConsensusEngine:
             cpu_before = 0.0
         
         for _ in range(count):
-            # 轮转选择任务类型
-            task_type = self._pouw_task_types[self._pouw_task_index % len(self._pouw_task_types)]
+            # 任务类型选择引入高熵，避免固定轮转被提前预测。
+            latest = self.get_latest_block()
+            latest_hash = latest.hash if latest else "genesis"
+            selector_seed = (
+                f"{latest_hash}:{self.node_id}:{time.time_ns()}:"
+                f"{uuid.uuid4().hex}:{self._pouw_task_index}"
+            )
+            challenge_window = int(time.time() // 30)
+            challenge_window_start_ms = challenge_window * 30000
+            challenge_window_end_ms = challenge_window_start_ms + 30000
+            selector = int(hashlib.sha256(selector_seed.encode()).hexdigest()[:8], 16)
+            task_type = self._pouw_task_types[selector % len(self._pouw_task_types)]
             self._pouw_task_index += 1
             
             try:
-                # 生成任务（自动基准使用 difficulty=2 确保足够工作量）
-                task = self.pouw_executor.generate_task(task_type, difficulty=2)
+                # 基准任务难度跟随链上难度动态变化（设上限防止空载时过度消耗）。
+                baseline_difficulty = max(2, min(4, int(self.current_difficulty)))
+                task_seed = hashlib.sha256(
+                    f"{selector_seed}:{task_type.value}".encode()
+                ).hexdigest()
+                task = self.pouw_executor.generate_task(
+                    task_type,
+                    difficulty=baseline_difficulty,
+                    task_seed=task_seed,
+                    entropy=selector_seed,
+                    prev_hash=latest_hash,
+                    block_height=(latest.height + 1) if latest else 0,
+                    miner_id=self.node_id,
+                    challenge_window=challenge_window,
+                    challenge_window_start_ms=challenge_window_start_ms,
+                    challenge_window_end_ms=challenge_window_end_ms,
+                )
                 
                 # 执行真实计算
                 result: RealPoUWResult = self.pouw_executor.execute_task(task, self.node_id)
@@ -1168,6 +1334,52 @@ class ConsensusEngine:
             except Exception as e:
                 self.log(f"POUW 任务执行异常: {e}")
                 continue
+
+    @staticmethod
+    def _extract_structured_proof(compute_hash: str) -> Optional[Dict[str, Any]]:
+        """从 computation_proof 提取结构化 proof_json 载荷。"""
+        if not isinstance(compute_hash, str) or not compute_hash.startswith("proof_json="):
+            return None
+        try:
+            return json.loads(compute_hash[len("proof_json="):])
+        except Exception:
+            return None
+
+    def _get_dynamic_work_threshold(self, block: Block) -> float:
+        """计算动态工作量门槛（含无单场景扰动）。"""
+        threshold = float(self.current_work_threshold)
+
+        # 无单场景：使用最小地板 + 可验证扰动，避免长期模板化。
+        has_real_orders = len(block.transactions or []) > 0
+        if not has_real_orders:
+            latest = self.get_latest_block()
+            seed = f"{latest.hash if latest else 'genesis'}:{block.height}:{self.node_id}:idle"
+            jitter_src = int(hashlib.sha256(seed.encode()).hexdigest()[:8], 16)
+            jitter = ((jitter_src % 1000) / 1000.0 - 0.5) * 8.0  # [-4, +4]
+            threshold = max(22.0, min(threshold, 46.0)) + jitter
+
+        if block.block_type == PoUWBlockType.VALIDATION_BLOCK.value:
+            threshold *= 0.75
+        elif block.block_type == PoUWBlockType.IDLE_BLOCK.value:
+            threshold *= 0.85
+
+        return round(max(20.0, min(180.0, threshold)), 2)
+
+    def _record_work_observation(self, block: Block, mining_time: float):
+        """记录工作量难度调节观测数据。"""
+        if block.consensus_type not in (ConsensusType.POUW, ConsensusType.SBOX_POUW):
+            return
+        proofs = block.pouw_proofs or []
+        if not proofs:
+            return
+        avg_quality = sum(float(p.get("quality_score", 0.0)) for p in proofs) / max(len(proofs), 1)
+        has_real_orders = len(block.transactions or []) > 0
+        self.work_difficulty_adjuster.record_observation(
+            mining_time=mining_time,
+            avg_quality=avg_quality,
+            has_real_orders=has_real_orders,
+            hash_difficulty=self.current_difficulty,
+        )
     
     def mine_pow(self, block: Block, max_iterations: int = 0) -> bool:
         """执行 PoW 挖矿。
@@ -1209,8 +1421,8 @@ class ConsensusEngine:
         # 计算总工作量
         total_work = sum(p.compute_work_score() for p in proofs)
         
-        # 动态阈值：生产环境使用更高的工作量要求
-        min_threshold = 50.0  # 生产环境阈值（防止低质量出块）
+        # 工作量通道动态难度阈值（与 hash 难度并行调节）。
+        min_threshold = self._get_dynamic_work_threshold(block)
         
         if total_work >= min_threshold:
             block.pouw_proofs = [
@@ -1225,6 +1437,7 @@ class ConsensusEngine:
                     "quality_score": round(p.quality_score, 2),
                     "miner_id": p.miner_id,
                     "verified": p.verified,
+                    "proof_meta": self._extract_structured_proof(p.compute_hash) or {},
                 }
                 for p in proofs
             ]
@@ -1352,6 +1565,7 @@ class ConsensusEngine:
                         "quality_score": round(p.quality_score, 2),
                         "miner_id": p.miner_id,
                         "verified": p.verified,
+                        "proof_meta": self._extract_structured_proof(p.compute_hash) or {},
                     }
                     for p in proofs
                 ]
@@ -1482,6 +1696,11 @@ class ConsensusEngine:
             block.block_reward = RewardDecayRules.calculate_reward(
                 PoUWBlockType.IDLE_BLOCK, base_reward, self._consecutive_idle
             )
+            # 无单惩罚窗口：连续空闲块过多时陡峭衰减，避免节点长期等待基准任务。
+            if self._consecutive_idle > self._idle_penalty_window:
+                overflow = self._consecutive_idle - self._idle_penalty_window
+                penalty = max(0.35, 1.0 - 0.18 * overflow)
+                block.block_reward = round(block.block_reward * penalty, 8)
         elif block_type == PoUWBlockType.VALIDATION_BLOCK:
             block.block_reward = RewardDecayRules.calculate_reward(
                 PoUWBlockType.VALIDATION_BLOCK, base_reward, self._consecutive_validation
@@ -1537,6 +1756,9 @@ class ConsensusEngine:
                         )
             except Exception as e:
                 self.log(f"⚠️ 评分记录失败(非致命): {e}")
+
+            # 工作量难度观测与调节（双通道动态难度）。
+            self._record_work_observation(block, mining_time)
             
             # 难度调整
             if self.difficulty_adjuster.should_adjust(block.height):
@@ -1546,6 +1768,16 @@ class ConsensusEngine:
                 if new_diff != self.current_difficulty:
                     self.log(f"📊 难度调整: {self.current_difficulty} -> {new_diff}")
                     self.current_difficulty = new_diff
+
+            if self.work_difficulty_adjuster.should_adjust(block.height):
+                new_work_threshold = self.work_difficulty_adjuster.calculate_new_threshold(
+                    self.current_work_threshold
+                )
+                if new_work_threshold != self.current_work_threshold:
+                    self.log(
+                        f"📈 工作量阈值调整: {self.current_work_threshold:.2f} -> {new_work_threshold:.2f}"
+                    )
+                    self.current_work_threshold = new_work_threshold
             
             self.log(f"✅ 区块 #{block.height} [{block.block_type}] 挖出 ({mining_time:.2f}s, 奖励={block.block_reward:.4f})")
             
@@ -1636,6 +1868,7 @@ class ConsensusEngine:
             # 验证每个证明的结构完整性
             # Validate structural integrity of each proof
             seen_task_ids = set()
+            seen_proof_hashes = set()
             for i, proof in enumerate(block.pouw_proofs):
                 if not isinstance(proof, dict):
                     return False, f"POUW proof #{i} is not a dict"
@@ -1653,6 +1886,44 @@ class ConsensusEngine:
                 compute_hash = proof.get('compute_hash', '')
                 if not isinstance(compute_hash, str) or '=' not in compute_hash:
                     return False, f"POUW proof #{i} invalid compute_hash format"
+
+                # 新版 proof_json 结构化校验（兼容旧版证明）。
+                structured = self._extract_structured_proof(compute_hash)
+                if structured is not None:
+                    required_structured = {
+                        'task_id', 'task_type', 'input_digest', 'challenge', 'challenge_commitment',
+                        'challenge_reveal', 'trace_digest', 'output_digest', 'timestamp_ms', 'proof_hash'
+                    }
+                    missing_structured = required_structured - set(structured.keys())
+                    if missing_structured:
+                        return False, f"POUW proof #{i} missing structured fields: {missing_structured}"
+
+                    payload_copy = dict(structured)
+                    proof_hash = payload_copy.pop('proof_hash', '')
+                    expected_proof_hash = hashlib.sha256(
+                        json.dumps(payload_copy, sort_keys=True, separators=(',', ':'), ensure_ascii=False, default=str).encode()
+                    ).hexdigest()
+                    if proof_hash != expected_proof_hash:
+                        return False, f"POUW proof #{i} proof_hash mismatch"
+
+                    if proof_hash in seen_proof_hashes:
+                        return False, f"POUW proof #{i} duplicate proof_hash"
+                    seen_proof_hashes.add(proof_hash)
+
+                    challenge = structured.get('challenge', '')
+                    reveal = structured.get('challenge_reveal', '')
+                    commitment = structured.get('challenge_commitment', '')
+                    if challenge and reveal and commitment:
+                        expected_commitment = hashlib.sha256(f"{challenge}:{reveal}".encode()).hexdigest()
+                        if expected_commitment != commitment:
+                            return False, f"POUW proof #{i} challenge commitment mismatch"
+
+                    ts_ms = structured.get('timestamp_ms', 0)
+                    start_ms = structured.get('window_start_ms', 0)
+                    end_ms = structured.get('window_end_ms', 0)
+                    if isinstance(ts_ms, int) and isinstance(start_ms, int) and isinstance(end_ms, int):
+                        if start_ms > 0 and end_ms > 0 and not (start_ms <= ts_ms <= end_ms + 30000):
+                            return False, f"POUW proof #{i} timestamp outside challenge window"
 
                 # 证明必须标记为已验证
                 if proof.get('verified') is not True:
@@ -2043,6 +2314,7 @@ class ConsensusEngine:
             "consensus_mined_distribution": self._build_consensus_distribution(
                 list(self._recent_consensus_mined)
             ),
+            "mechanism_strategy": self.get_mechanism_strategy(),
         }
         # S-Box 挖矿信息
         if self._sbox_miner:

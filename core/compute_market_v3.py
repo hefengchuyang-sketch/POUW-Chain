@@ -23,6 +23,7 @@
 import time
 import json
 import hashlib
+import math
 import sqlite3
 import logging
 import os as _os
@@ -33,6 +34,7 @@ from enum import Enum
 from pathlib import Path
 from contextlib import contextmanager
 import threading
+import uuid
 
 logger = logging.getLogger(__name__)
 import secrets
@@ -390,6 +392,11 @@ class ComputeOrder:
     # 结果
     result_hash: str = ""
     result_encrypted: str = ""
+    result_commit_hash: str = ""
+    result_committed_at: float = 0.0
+    result_revealed_at: float = 0.0
+    tee_node_id: str = ""
+    tee_attestation: Dict[str, Any] = field(default_factory=dict)
 
     # 结算状态
     settlement_status: str = "not_settled"    # not_settled / settled / pending
@@ -435,6 +442,11 @@ class ComputeOrder:
             "status": self.status.value,
             "result_hash": self.result_hash,
             "result_encrypted": self.result_encrypted,
+            "result_commit_hash": self.result_commit_hash,
+            "result_committed_at": self.result_committed_at,
+            "result_revealed_at": self.result_revealed_at,
+            "tee_node_id": self.tee_node_id,
+            "tee_attestation": self.tee_attestation,
             "settlement_status": self.settlement_status,
             "settlement_error": self.settlement_error,
             "settlement_attempts": self.settlement_attempts,
@@ -467,6 +479,11 @@ class ComputeOrder:
         order.status = OrderStatus(data.get('status', 'created'))
         order.result_hash = data.get('result_hash', '')
         order.result_encrypted = data.get('result_encrypted', '')
+        order.result_commit_hash = data.get('result_commit_hash', '')
+        order.result_committed_at = data.get('result_committed_at', 0.0)
+        order.result_revealed_at = data.get('result_revealed_at', 0.0)
+        order.tee_node_id = data.get('tee_node_id', '')
+        order.tee_attestation = data.get('tee_attestation', {}) or {}
         order.settlement_status = data.get('settlement_status', 'not_settled')
         order.settlement_error = data.get('settlement_error', '')
         order.settlement_attempts = data.get('settlement_attempts', 0)
@@ -537,6 +554,7 @@ class ComputeMarketV3:
     HEARTBEAT_TIMEOUT = 60              # 心跳超时（秒）
     ORDER_TIMEOUT = 300                 # 订单匹配超时（5分钟）
     WATCHDOG_INTERVAL = 30              # 守护巡检间隔（秒）
+    DEFAULT_TEE_MAX_EVIDENCE_AGE_SECONDS = int(_os.getenv("POUW_TEE_MAX_EVIDENCE_AGE_SECONDS", "86400"))
     
     def __init__(self, 
                  db_path: str = "data/compute_market_v3.db",
@@ -546,6 +564,11 @@ class ComputeMarketV3:
         self.schedule_mode = schedule_mode
         
         self._lock = threading.Lock()
+        self._tee_measurement_whitelist = self._load_tee_measurement_whitelist()
+        self._tee_rollout_percent = self._read_rollout_percent()
+        self._tee_full_enforce = _os.getenv("POUW_TEE_FULL_ENFORCE", "false").strip().lower() == "true"
+        self._tee_audit_events: List[Dict[str, Any]] = []
+        self._order_tx_submitter = None  # 可选回调：将订单事件投递到共识层
         self._init_db()
         
         # 守护线程 — 巡检超时订单和离线矿工
@@ -554,6 +577,46 @@ class ComputeMarketV3:
             target=self._watchdog_loop, daemon=True, name="market-watchdog"
         )
         self._watchdog_thread.start()
+
+    def _load_tee_measurement_whitelist(self) -> List[str]:
+        raw = _os.getenv("POUW_TEE_MRENCLAVE_WHITELIST", "")
+        if not raw.strip():
+            return []
+        return [x.strip().lower() for x in raw.split(",") if x.strip()]
+
+    def _read_rollout_percent(self) -> int:
+        raw = _os.getenv("POUW_TEE_STRICT_ROLLOUT_PERCENT", "20").strip()
+        try:
+            val = int(raw)
+        except Exception:
+            val = 20
+        return max(0, min(100, val))
+
+    def _should_enforce_strict_tee_policy(self, order_id: str) -> bool:
+        if self._tee_full_enforce:
+            return True
+        if self._tee_rollout_percent <= 0:
+            return False
+        if self._tee_rollout_percent >= 100:
+            return True
+        bucket = int(hashlib.sha256(order_id.encode()).hexdigest()[:8], 16) % 100
+        return bucket < self._tee_rollout_percent
+
+    def _audit_tee_event(self, order_id: str, enforced: bool, ok: bool, reason: str):
+        self._tee_audit_events.append({
+            "order_id": order_id,
+            "enforced": enforced,
+            "ok": ok,
+            "reason": reason,
+            "timestamp": time.time(),
+        })
+        if len(self._tee_audit_events) > 2000:
+            self._tee_audit_events = self._tee_audit_events[-2000:]
+
+    def get_tee_rollout_audit(self, limit: int = 200) -> List[Dict[str, Any]]:
+        if limit <= 0:
+            return []
+        return list(self._tee_audit_events[-limit:])
     
     @contextmanager
     def _conn(self):
@@ -617,11 +680,130 @@ class ComputeMarketV3:
                     created_at REAL NOT NULL
                 )
             """)
+
+            # 订单生命周期交易化事件表（订单交易上链前的本地持久化队列/审计轨迹）
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS order_events (
+                    event_id TEXT PRIMARY KEY,
+                    order_id TEXT NOT NULL,
+                    action TEXT NOT NULL,
+                    tx_data TEXT NOT NULL,
+                    submitted INTEGER DEFAULT 0,
+                    submit_error TEXT DEFAULT '',
+                    created_at REAL NOT NULL
+                )
+            """)
             
             # 索引
             conn.execute("CREATE INDEX IF NOT EXISTS idx_miners_sector ON miners(sector)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_orders_sector ON orders(sector)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_order_events_order ON order_events(order_id, created_at)")
+
+    # ============== 订单交易化（链上承载） ==============
+
+    def set_order_tx_submitter(self, submitter_fn):
+        """设置订单事件交易提交回调。
+
+        submitter_fn 接口：callable(tx_dict) -> Tuple[bool, str]
+        - tx_dict: 订单生命周期交易字典
+        - 返回: (是否成功, 消息)
+        """
+        self._order_tx_submitter = submitter_fn
+
+    def _build_order_lifecycle_tx(self,
+                                  order_id: str,
+                                  action: str,
+                                  buyer_address: str,
+                                  amount: float,
+                                  payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """构建可投递到共识层的订单生命周期交易字典。"""
+        payload = payload or {}
+        tx_id = hashlib.sha256(
+            f"ordertx:{order_id}:{action}:{time.time_ns()}:{uuid.uuid4().hex}".encode()
+        ).hexdigest()[:32]
+        to_addr = str(payload.get("to_address") or payload.get("counterparty") or "ORDER_BOOK")
+        return {
+            "tx_id": tx_id,
+            "tx_type": "order_lifecycle",
+            "order_action": action,
+            "order_id": order_id,
+            "from": buyer_address,
+            "to": to_addr,
+            "amount": max(0.00000001, float(amount or 0.0)),
+            "fee": float(payload.get("fee", 0.0)),
+            "timestamp": time.time(),
+            "payload": payload,
+        }
+
+    def _record_order_event(self,
+                            order: ComputeOrder,
+                            action: str,
+                            payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """记录订单生命周期事件，并尝试通过回调投递到共识层。"""
+        tx = self._build_order_lifecycle_tx(
+            order_id=order.order_id,
+            action=action,
+            buyer_address=order.buyer_address,
+            amount=order.total_budget,
+            payload=payload or {},
+        )
+
+        submitted = 0
+        submit_error = ""
+        if self._order_tx_submitter:
+            try:
+                ok, msg = self._order_tx_submitter(tx)
+                submitted = 1 if ok else 0
+                submit_error = "" if ok else str(msg)
+            except Exception as submit_err:
+                submitted = 0
+                submit_error = f"submit_exception:{submit_err}"
+
+        with self._conn() as conn:
+            conn.execute("""
+                INSERT INTO order_events
+                (event_id, order_id, action, tx_data, submitted, submit_error, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (
+                tx["tx_id"],
+                order.order_id,
+                action,
+                json.dumps(tx, ensure_ascii=False),
+                submitted,
+                submit_error,
+                time.time(),
+            ))
+
+        return tx
+
+    def get_order_events(self, order_id: str, limit: int = 100) -> List[Dict[str, Any]]:
+        """获取订单生命周期交易事件（按时间升序）。"""
+        if not order_id:
+            return []
+        n = max(1, min(int(limit or 100), 1000))
+        with self._conn() as conn:
+            rows = conn.execute("""
+                SELECT action, tx_data, submitted, submit_error, created_at
+                FROM order_events
+                WHERE order_id = ?
+                ORDER BY created_at ASC
+                LIMIT ?
+            """, (order_id, n)).fetchall()
+        events: List[Dict[str, Any]] = []
+        for row in rows:
+            try:
+                tx_data = json.loads(row["tx_data"]) if row["tx_data"] else {}
+            except Exception:
+                tx_data = {}
+            events.append({
+                "action": row["action"],
+                "submitted": bool(row["submitted"]),
+                "submit_error": row["submit_error"] or "",
+                "created_at": row["created_at"],
+                "tx": tx_data,
+            })
+        return events
     
     # ============== 矿工管理 ==============
     
@@ -777,7 +959,9 @@ class ComputeMarketV3:
                      task_hash: str,
                      task_encrypted_blob: str = "",
                      execution_mode: TaskExecutionMode = TaskExecutionMode.NORMAL,
-                     allow_validation: bool = True) -> Tuple[Optional[ComputeOrder], str]:
+                     allow_validation: bool = True,
+                     tee_node_id: str = "",
+                     tee_attestation: Optional[Dict[str, Any]] = None) -> Tuple[Optional[ComputeOrder], str]:
         """
         创建订单
         
@@ -803,10 +987,26 @@ class ComputeMarketV3:
                 task_hash=task_hash,
                 task_encrypted_blob=task_encrypted_blob,
                 allow_validation=allow_validation,
+                tee_node_id=tee_node_id,
+                tee_attestation=tee_attestation or {},
             )
         except ValueError as e:
             logger.error(f"订单创建参数错误: {e}")
             return None, "invalid_order_parameters"
+
+        if order.execution_mode == TaskExecutionMode.TEE:
+            if not order.tee_node_id:
+                return None, "tee_node_id_required"
+            if not isinstance(order.tee_attestation, dict) or not order.tee_attestation:
+                return None, "tee_attestation_required"
+            # TEE 订单强制启用 TEE 证明验证，不允许关闭。
+            order.allow_validation = True
+            order.validation_type = ValidationType.TEE_ATTESTATION
+
+            # 主流程前移：下单阶段就进行 TEE 证据策略预检（年龄/绑定/灰度白名单）。
+            tee_ok, tee_msg = self._validate_tee_attestation(order)
+            if not tee_ok:
+                return None, f"tee_policy_reject:{tee_msg}"
         
         # 锁定预算
         order.locked_budget = order.total_budget
@@ -825,6 +1025,19 @@ class ComputeMarketV3:
                 OrderStatus.CREATED.value,
                 time.time()
             ))
+
+        # 订单交易化：创建事件
+        self._record_order_event(
+            order,
+            action="create",
+            payload={
+                "sector": order.sector,
+                "gpu_count": order.gpu_count,
+                "duration_hours": order.duration_hours,
+                "max_price": order.max_price,
+                "task_hash": order.task_hash,
+            },
+        )
         
         # 尝试匹配
         matched, msg = self._match_order(order)
@@ -851,22 +1064,30 @@ class ComputeMarketV3:
             if not available:
                 return False, "暂无可用矿工"
             
-            # 按综合评分排序
-            available.sort(key=lambda m: m.combined_score, reverse=True)
+            # 按协议挑战评分 + 质量/可靠性/时效 计算派单权重，
+            # 再使用确定性加权抽签生成分配顺序（避免单纯最高分垄断）。
+            candidates: List[Tuple[MinerNode, float, float]] = []
+            for miner in available:
+                if miner.declaration and miner.declaration.price_floor > order.max_price:
+                    continue
+                challenge_score = self._protocol_challenge_score(order.order_id, miner)
+                dispatch_weight = self._compute_dispatch_weight(miner, challenge_score)
+                candidates.append((miner, dispatch_weight, challenge_score))
+
+            if not candidates:
+                return False, "无满足价格与派单权重条件的矿工"
+
+            weighted_order = self._deterministic_weighted_order(order.order_id, candidates)
             
             # 分配 GPU
             remaining_gpus = order.gpu_count
             assigned = []
             assigned_gpus = {}
             
-            for miner in available:
+            for miner, dispatch_weight, challenge_score in weighted_order:
                 if remaining_gpus <= 0:
                     break
-                
-                # 检查价格
-                if miner.declaration and miner.declaration.price_floor > order.max_price:
-                    continue
-                
+
                 # 分配
                 gpus_to_assign = min(miner.available_gpus, remaining_gpus)
                 if gpus_to_assign > 0:
@@ -883,6 +1104,22 @@ class ComputeMarketV3:
             order.status = OrderStatus.MATCHED
             order.matched_at = time.time()
             self._update_order(order)
+
+            # 订单交易化：接单事件
+            self._record_order_event(
+                order,
+                action="accept",
+                payload={
+                    "assigned_miners": assigned,
+                    "assigned_gpus": assigned_gpus,
+                    "dispatch_weights": {
+                        m.miner_id: round(w, 6) for m, w, _ in weighted_order
+                    },
+                    "challenge_scores": {
+                        m.miner_id: round(c, 6) for m, _, c in weighted_order
+                    },
+                },
+            )
             
             # 更新矿工状态
             for miner_id, gpus in assigned_gpus.items():
@@ -895,6 +1132,85 @@ class ComputeMarketV3:
                     self._update_miner(miner)
             
             return True, f"已匹配 {len(assigned)} 个矿工，共 {order.gpu_count} 张 GPU"
+
+    def _protocol_challenge_score(self, order_id: str, miner: MinerNode) -> float:
+        """协议挑战分：以订单+矿工为输入的确定性随机分（0-1）。"""
+        window = int(time.time() // 300)  # 5 分钟窗口
+        challenge = hashlib.sha256(
+            f"dispatch_challenge:{order_id}:{miner.miner_id}:{window}".encode()
+        ).hexdigest()
+        return int(challenge[:8], 16) / 0xFFFFFFFF
+
+    def _compute_dispatch_weight(self, miner: MinerNode, challenge_score: float) -> float:
+        """计算派单权重（质量+可靠性+时效）并施加风险惩罚。"""
+        system_quality = max(0.0, min(1.0, float(miner.system_score) / 2.0))
+        ux_rating = (
+            max(0.0, min(1.0, float(miner.user_rating_weighted) / 5.0))
+            if miner.user_rating_count > 0
+            else 0.5
+        )
+
+        # 用户体验质押金信号：历史销毁越多，评价可信度越高。
+        # 使用 log 缩放防止头部矿工因大额质押过度垄断。
+        stake_factor = self._compute_ux_stake_factor(miner.total_stake_burned)
+        ux_quality = 0.70 * ux_rating + 0.30 * stake_factor
+        quality = 0.55 * system_quality + 0.45 * ux_quality
+
+        total_tasks = max(0, int(miner.tasks_completed) + int(miner.tasks_failed))
+        reliability = (miner.tasks_completed + 1) / (total_tasks + 2)  # 平滑先验
+        reliability = max(0.0, min(1.0, reliability))
+
+        age = max(0.0, time.time() - float(miner.last_heartbeat or 0.0))
+        timeliness = max(0.0, min(1.0, 1.0 - age / float(self.HEARTBEAT_TIMEOUT)))
+
+        base = 0.45 * quality + 0.30 * reliability + 0.25 * timeliness
+
+        # 协议挑战倍率，范围 [0.85, 1.15]
+        challenge_multiplier = 0.85 + 0.30 * max(0.0, min(1.0, challenge_score))
+
+        failure_ratio = (miner.tasks_failed / total_tasks) if total_tasks > 0 else 0.0
+        penalty = min(0.35, failure_ratio * 0.25)
+
+        return max(0.001, base * challenge_multiplier - penalty)
+
+    def _compute_ux_stake_factor(self, total_stake_burned: float) -> float:
+        """将历史评价质押销毁金额映射为 [0,1] 的可信度因子。"""
+        burned = max(0.0, float(total_stake_burned or 0.0))
+        # burned=0 -> 0；burned>=10 MAIN 时逐步逼近 1。
+        return min(1.0, math.log1p(burned) / math.log1p(10.0))
+
+    def _deterministic_weighted_order(
+        self,
+        order_id: str,
+        candidates: List[Tuple[MinerNode, float, float]],
+    ) -> List[Tuple[MinerNode, float, float]]:
+        """确定性加权抽签，返回无重复矿工顺序。"""
+        pool = list(candidates)
+        selected: List[Tuple[MinerNode, float, float]] = []
+        round_idx = 0
+
+        while pool:
+            total = sum(max(0.001, x[1]) for x in pool)
+            if total <= 0:
+                selected.extend(pool)
+                break
+
+            seed = hashlib.sha256(f"{order_id}:{round_idx}:{len(pool)}".encode()).hexdigest()
+            roll = int(seed[:8], 16) / 0xFFFFFFFF
+            target = roll * total
+
+            acc = 0.0
+            pick_index = len(pool) - 1
+            for i, item in enumerate(pool):
+                acc += max(0.001, item[1])
+                if acc >= target:
+                    pick_index = i
+                    break
+
+            selected.append(pool.pop(pick_index))
+            round_idx += 1
+
+        return selected
     
     def _get_available_miners_for_order(self, order: ComputeOrder) -> List[MinerNode]:
         """获取订单可用的矿工"""
@@ -918,6 +1234,8 @@ class ComputeMarketV3:
                 # 检查执行模式支持
                 if order.execution_mode == TaskExecutionMode.TEE:
                     if not miner.declaration or not miner.declaration.supports_tee:
+                        continue
+                    if order.tee_node_id and miner.miner_id != order.tee_node_id:
                         continue
                 if order.execution_mode == TaskExecutionMode.ZK:
                     if not miner.declaration or not miner.declaration.supports_zk:
@@ -995,6 +1313,13 @@ class ComputeMarketV3:
         order.status = OrderStatus.EXECUTING
         order.started_at = time.time()
         self._update_order(order)
+
+        # 订单交易化：执行开始事件
+        self._record_order_event(
+            order,
+            action="execute_start",
+            payload={"miner_id": miner_id},
+        )
         
         return True, "执行开始"
     
@@ -1020,13 +1345,114 @@ class ComputeMarketV3:
         
         if order.status != OrderStatus.EXECUTING:
             return False, f"订单状态不正确: {order.status.value}"
+
+        # TEE 模式下，执行矿工必须与绑定 TEE 节点一致。
+        if order.execution_mode == TaskExecutionMode.TEE and order.tee_node_id:
+            if miner_id != order.tee_node_id:
+                return False, "TEE 订单提交矿工与绑定节点不一致"
+
+        # TEE 模式下，提交结果前强制验证远程证明。
+        if order.execution_mode == TaskExecutionMode.TEE:
+            tee_ok, tee_msg = self._validate_tee_attestation(order)
+            if not tee_ok:
+                order.status = OrderStatus.FAILED
+                order.finished_at = time.time()
+                order.settlement_status = "not_settled"
+                order.settlement_error = f"tee_validation_failed: {tee_msg}"
+                self._update_order(order)
+                self._release_miners(order)
+                return False, f"TEE 证明验证失败: {tee_msg}"
         
+        # 默认兼容旧调用：未显式 commit 时自动执行 commit。
+        commit_hash = hashlib.sha256(f"{order.order_id}:{result_hash}".encode()).hexdigest()
+        if not order.result_commit_hash:
+            ok_commit, msg_commit = self.commit_result(order_id, miner_id, commit_hash)
+            if not ok_commit:
+                return False, msg_commit
+
+        # reveal 阶段（含结算）
+        return self.reveal_result(order_id, miner_id, result_hash, result_encrypted)
+
+    def commit_result(self, order_id: str, miner_id: str, commit_hash: str) -> Tuple[bool, str]:
+        """提交结果承诺哈希（commit 阶段）。"""
+        order = self.get_order(order_id)
+        if not order:
+            return False, "订单不存在"
+        if miner_id not in order.assigned_miners:
+            return False, "矿工未被分配到此订单"
+        if order.status != OrderStatus.EXECUTING:
+            return False, f"订单状态不正确: {order.status.value}"
+        if not isinstance(commit_hash, str) or len(commit_hash) < 16:
+            return False, "commit_hash 无效"
+
+        # 不允许覆盖承诺，避免二次提交改口。
+        if order.result_commit_hash and order.result_commit_hash != commit_hash:
+            return False, "commit_hash 与已提交承诺不一致"
+
+        first_commit = not bool(order.result_commit_hash)
+        order.result_commit_hash = commit_hash
+        if first_commit and order.result_committed_at <= 0:
+            order.result_committed_at = time.time()
+        self._update_order(order)
+
+        if first_commit:
+            self._record_order_event(
+                order,
+                action="result_commit",
+                payload={"commit_hash": commit_hash, "miner_id": miner_id},
+            )
+        return True, "结果承诺已提交"
+
+    def reveal_result(self,
+                      order_id: str,
+                      miner_id: str,
+                      result_hash: str,
+                      result_encrypted: str = "") -> Tuple[bool, str]:
+        """提交结果明文摘要（reveal 阶段），并触发结算。"""
+        order = self.get_order(order_id)
+        if not order:
+            return False, "订单不存在"
+        if miner_id not in order.assigned_miners:
+            return False, "矿工未被分配到此订单"
+        if order.status != OrderStatus.EXECUTING:
+            return False, f"订单状态不正确: {order.status.value}"
+        if not order.result_commit_hash:
+            return False, "结果尚未 commit"
+
+        # TEE 模式下，显式 reveal 也必须通过证明校验。
+        if order.execution_mode == TaskExecutionMode.TEE:
+            tee_ok, tee_msg = self._validate_tee_attestation(order)
+            if not tee_ok:
+                order.status = OrderStatus.FAILED
+                order.finished_at = time.time()
+                order.settlement_status = "not_settled"
+                order.settlement_error = f"tee_validation_failed: {tee_msg}"
+                self._update_order(order)
+                self._release_miners(order)
+                return False, f"TEE 证明验证失败: {tee_msg}"
+
+        expected_commit = hashlib.sha256(f"{order.order_id}:{result_hash}".encode()).hexdigest()
+        if order.result_commit_hash != expected_commit:
+            return False, "reveal 与 commit 不匹配"
+
         # 先写入执行结果，再尝试结算
         order.result_hash = result_hash
         order.result_encrypted = result_encrypted
+        if order.result_revealed_at <= 0:
+            order.result_revealed_at = time.time()
         order.settlement_status = "not_settled"
         order.settlement_error = ""
         order.settlement_attempts += 1
+
+        self._record_order_event(
+            order,
+            action="result_reveal",
+            payload={
+                "result_hash": result_hash,
+                "result_encrypted_hash": hashlib.sha256((result_encrypted or "").encode()).hexdigest() if result_encrypted else "",
+                "miner_id": miner_id,
+            },
+        )
 
         # 执行结算（强一致：结算失败不允许进入 FINISHED）
         settled, settle_msg = self._settle_order(order)
@@ -1038,12 +1464,22 @@ class ComputeMarketV3:
             order.settlement_error = ""
             order.settled_at = time.time()
             self._update_order(order)
+            self._record_order_event(
+                order,
+                action="settle",
+                payload={"status": "settled", "settled_at": order.settled_at},
+            )
         else:
             order.status = OrderStatus.SETTLEMENT_PENDING
             order.finished_at = 0.0
             order.settlement_status = "pending"
             order.settlement_error = settle_msg
             self._update_order(order)
+            self._record_order_event(
+                order,
+                action="settlement_pending",
+                payload={"error": settle_msg},
+            )
         
         # 执行阶段完成后释放矿工资源；若结算待处理，订单保留 pending 状态用于后续补偿。
         self._release_miners(order)
@@ -1051,6 +1487,79 @@ class ComputeMarketV3:
         if settled:
             return True, "结果已提交，订单完成"
         return False, f"结果已提交，但结算待处理: {settle_msg}"
+
+    def cancel_order(self, order_id: str, requester: str = "", reason: str = "") -> Tuple[bool, str]:
+        """取消订单（交易化阶段接口）。
+
+        规则：
+        - CREATED / MATCHED 可取消
+        - EXECUTING 及之后不可取消（需走失败/仲裁/结算流程）
+        """
+        order = self.get_order(order_id)
+        if not order:
+            return False, "订单不存在"
+
+        if requester and requester != order.buyer_address:
+            return False, "只有买家可取消订单"
+
+        if order.status not in (OrderStatus.CREATED, OrderStatus.MATCHED):
+            return False, f"当前状态不可取消: {order.status.value}"
+
+        if order.status == OrderStatus.MATCHED:
+            self._release_miners(order)
+
+        order.status = OrderStatus.CANCELLED
+        order.finished_at = time.time()
+        order.settlement_status = "not_settled"
+        order.settlement_error = reason or "cancelled_by_buyer"
+        self._update_order(order)
+
+        self._record_order_event(
+            order,
+            action="cancel",
+            payload={
+                "requester": requester or order.buyer_address,
+                "reason": order.settlement_error,
+            },
+        )
+        return True, "订单已取消"
+
+    def _validate_tee_attestation(self, order: ComputeOrder) -> Tuple[bool, str]:
+        """对订单绑定的 TEE 证明做严格校验。"""
+        if order.execution_mode != TaskExecutionMode.TEE:
+            return True, "not_tee_mode"
+
+        attestation = getattr(order, "tee_attestation", None)
+        if not isinstance(attestation, dict) or not attestation:
+            return False, "订单缺少 TEE 认证报告"
+
+        node_id = getattr(order, "tee_node_id", "") or str(attestation.get("node_id", ""))
+        if not node_id:
+            return False, "订单缺少 TEE 节点绑定信息"
+
+        # 节点绑定一致性检查（订单绑定节点与证据节点必须一致）
+        evidence_node_id = str(attestation.get("node_id", node_id))
+        if evidence_node_id != node_id:
+            self._audit_tee_event(order.order_id, True, False, "node_binding_mismatch")
+            return False, "TEE 证据节点与订单绑定节点不一致"
+
+        strict_enforced = self._should_enforce_strict_tee_policy(order.order_id)
+
+        try:
+            from .tee_computing import get_tee_system
+
+            tee_system = get_tee_system()
+            ok, msg = tee_system["tee_manager"].validate_attestation_for_order(
+                node_id=node_id,
+                attestation=attestation,
+                max_evidence_age_seconds=self.DEFAULT_TEE_MAX_EVIDENCE_AGE_SECONDS,
+                allowed_measurements=self._tee_measurement_whitelist if strict_enforced else None,
+            )
+            self._audit_tee_event(order.order_id, strict_enforced, ok, msg)
+            return ok, msg
+        except Exception:
+            self._audit_tee_event(order.order_id, strict_enforced, False, "tee_system_unavailable")
+            return False, "TEE 认证验证系统不可用"
     
     def _settle_order(self, order: ComputeOrder) -> Tuple[bool, str]:
         """
@@ -1217,11 +1726,21 @@ class ComputeMarketV3:
             order.settlement_error = ""
             order.settled_at = time.time()
             self._update_order(order)
+            self._record_order_event(
+                order,
+                action="settle",
+                payload={"status": "settled", "retry": True, "settled_at": order.settled_at},
+            )
             return True, "结算重试成功"
 
         order.settlement_status = "pending"
         order.settlement_error = settle_msg
         self._update_order(order)
+        self._record_order_event(
+            order,
+            action="settlement_pending",
+            payload={"error": settle_msg, "retry": True},
+        )
         return False, f"结算重试失败: {settle_msg}"
     
     def _timeout_order(self, order: ComputeOrder, reason: str):
@@ -1234,6 +1753,13 @@ class ComputeMarketV3:
             order_dict = order.to_dict()
             order_dict["failure_reason"] = reason
             order_dict["refund_eligible"] = True
+
+            # 订单交易化：失败/取消事件
+            self._record_order_event(
+                order,
+                action="fail",
+                payload={"reason": reason, "refund_eligible": True},
+            )
             
             # 释放矿工资源
             self._release_miners(order)
@@ -1315,24 +1841,7 @@ class ComputeMarketV3:
             # TEE 远程证明
             if order.execution_mode != TaskExecutionMode.TEE:
                 return False, "订单未使用 TEE 模式"
-            # 验证订单的 TEE 认证报告
-            attestation = getattr(order, 'tee_attestation', None)
-            if not attestation:
-                return False, "订单缺少 TEE 认证报告"
-            # 检查必要的认证字段
-            if not isinstance(attestation, dict):
-                return False, "TEE 认证报告格式无效"
-            required_fields = ['mrenclave', 'mrsigner', 'report_id', 'is_valid']
-            for f in required_fields:
-                if f not in attestation:
-                    return False, f"TEE 认证报告缺少字段: {f}"
-            if not attestation.get('is_valid', False):
-                return False, "TEE 认证报告验证未通过"
-            # 检查认证是否过期
-            expiry = attestation.get('expiry', 0)
-            if expiry > 0 and expiry < time.time():
-                return False, "TEE 认证报告已过期"
-            return True, f"TEE 证明验证通过: {attestation.get('report_id', '')[:16]}"
+            return self._validate_tee_attestation(order)
         
         return False, f"不支持的验证类型: {validation_type.value}"
     

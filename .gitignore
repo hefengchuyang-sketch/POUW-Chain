@@ -118,4 +118,5 @@ data/p2p_recv/
 data/files/
 data/certs/
 data/*.bin
+data_peer*/
 data/*.json

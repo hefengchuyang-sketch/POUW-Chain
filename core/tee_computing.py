@@ -17,12 +17,16 @@ import uuid
 import secrets
 import threading
 import logging
+import hmac
+import os
 from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
 from typing import Dict, List, Optional, Tuple, Any, Callable
 from enum import Enum
 import json
+
+from .tee_verifier_client import AttestationVerifierClient
 
 
 # ============== 枚举类型 ==============
@@ -115,6 +119,11 @@ class AttestationReport:
     mrsigner: str = ""                     # 签名者测量值
     report_data: str = ""                  # 用户数据
     quote: bytes = b""                     # 完整Quote
+    provider: str = ""                     # 证据提供方
+    evidence_type: str = ""                # quote/report/jwt/custom
+    cert_chain_hash: str = ""              # 证书链哈希
+    tcb_status: str = "unknown"            # TCB 状态
+    measurement_ts: float = 0.0             # 测量时间戳
     
     # 验证结果
     is_valid: bool = False
@@ -140,6 +149,11 @@ class AttestationReport:
             "attestation_type": self.attestation_type.value,
             "mrenclave": self.mrenclave,
             "mrsigner": self.mrsigner,
+            "provider": self.provider,
+            "evidence_type": self.evidence_type,
+            "cert_chain_hash": self.cert_chain_hash,
+            "tcb_status": self.tcb_status,
+            "measurement_ts": self.measurement_ts,
             "is_valid": self.is_valid,
             "verified_at": self.verified_at,
             "report_hash": self.report_hash,
@@ -165,6 +179,35 @@ class TEENode:
     
     # 定价
     tee_premium_rate: float = 0.2          # TEE 溢价率 (20%)
+
+    # 向后兼容字段（供旧 RPC 代码读取）
+    @property
+    def tee_type(self):
+        return self.tee_capability.tee_type
+
+    @property
+    def status(self):
+        if not self.is_active:
+            return TEENodeStatus.OFFLINE
+        if self.attestation and self.attestation.is_valid and not self.needs_re_attestation():
+            return TEENodeStatus.VERIFIED
+        return TEENodeStatus.UNVERIFIED
+
+    @property
+    def capabilities(self):
+        return self.tee_capability.to_dict()
+
+    @property
+    def registration_time(self):
+        return self.last_attestation or 0.0
+
+    @property
+    def attestation_report(self):
+        return self.attestation
+
+    @property
+    def last_attestation_time(self):
+        return self.last_attestation
     
     def needs_re_attestation(self, validity_hours: int = 24) -> bool:
         """检查是否需要重新认证"""
@@ -262,6 +305,15 @@ class TEEManager:
         self.attestation_reports: Dict[str, AttestationReport] = {}
         self._lock = threading.RLock()
         self.attestation_validity_hours = 24
+        self.default_max_evidence_age_seconds = int(
+            os.getenv("POUW_TEE_MAX_EVIDENCE_AGE_SECONDS", "86400")
+        )
+        # 模拟硬件中固化的认证密钥（每节点唯一）
+        self._node_attestation_keys: Dict[str, bytes] = {}
+        self._verifier_client = AttestationVerifierClient(
+            local_verifier=self._local_verify_attestation_payload
+        )
+        self._kms_audit_log: List[Dict[str, Any]] = []
     
     def register_tee_node(
         self,
@@ -269,6 +321,7 @@ class TEEManager:
         tee_type: TEEType,
         version: str = "1.0",
         enclave_size_mb: int = 256,
+        capabilities: Optional[Dict[str, Any]] = None,
     ) -> TEENode:
         """注册 TEE 节点"""
         with self._lock:
@@ -277,6 +330,17 @@ class TEEManager:
                 version=version,
                 enclave_size_mb=enclave_size_mb,
             )
+            if capabilities:
+                if "supports_remote_attestation" in capabilities:
+                    capability.supports_remote_attestation = bool(capabilities["supports_remote_attestation"])
+                if "supports_sealing" in capabilities:
+                    capability.supports_sealing = bool(capabilities["supports_sealing"])
+                if "supports_migration" in capabilities:
+                    capability.supports_migration = bool(capabilities["supports_migration"])
+                if "max_threads" in capabilities:
+                    capability.max_threads = int(capabilities["max_threads"])
+                if "certified_until" in capabilities:
+                    capability.certified_until = float(capabilities["certified_until"])
             
             node = TEENode(
                 node_id=node_id,
@@ -285,7 +349,39 @@ class TEEManager:
             )
             
             self.nodes[node_id] = node
+            # 基于 node_id 生成稳定认证密钥（模拟硬件固化密钥）
+            self._node_attestation_keys[node_id] = hashlib.sha256(
+                f"tee_attest_key::{node_id}".encode()
+            ).digest()
             return node
+
+    def get_node(self, node_id: str) -> Optional[TEENode]:
+        with self._lock:
+            return self.nodes.get(node_id)
+
+    def list_nodes(
+        self,
+        tee_type: Optional[TEEType] = None,
+        status: Optional[TEENodeStatus] = None,
+    ) -> List[TEENode]:
+        with self._lock:
+            out: List[TEENode] = []
+            for node in self.nodes.values():
+                if tee_type and node.tee_capability.tee_type != tee_type:
+                    continue
+                if status and node.status != status:
+                    continue
+                out.append(node)
+            return out
+
+    def build_mock_quote(self, node_id: str, payload: bytes) -> bytes:
+        """构造可验证的模拟 quote（payload + HMAC-SHA256）。"""
+        with self._lock:
+            key = self._node_attestation_keys.get(node_id)
+            if not key:
+                raise ValueError(f"Node {node_id} not registered")
+            sig = hmac.new(key, payload, hashlib.sha256).digest()
+            return payload + sig
     
     def submit_attestation(
         self,
@@ -294,6 +390,11 @@ class TEEManager:
         mrsigner: str,
         quote: bytes = b"",
         report_data: str = "",
+        provider: str = "local",
+        evidence_type: str = "report",
+        cert_chain_hash: str = "",
+        tcb_status: str = "unknown",
+        measurement_ts: float = 0.0,
     ) -> AttestationReport:
         """提交认证报告"""
         with self._lock:
@@ -309,12 +410,20 @@ class TEEManager:
                 mrsigner=mrsigner,
                 quote=quote,
                 report_data=report_data,
+                provider=provider,
+                evidence_type=evidence_type,
+                cert_chain_hash=cert_chain_hash,
+                tcb_status=tcb_status,
+                measurement_ts=measurement_ts or time.time(),
             )
-            
-            # 验证（模拟）
-            report.is_valid = self._verify_attestation(report)
-            report.verified_at = time.time()
-            report.verified_by = "local_verifier"
+
+            # 通过 verifier client 转发验证（外部服务不可用时自动回退本地验证）。
+            verify_result = self._verifier_client.verify_attestation(
+                self._to_verifier_payload(report)
+            )
+            report.is_valid = bool(verify_result.get("is_valid"))
+            report.verified_at = float(verify_result.get("verified_at", time.time()))
+            report.verified_by = str(verify_result.get("verified_by", "local_verifier"))
             report.expiry = time.time() + self.attestation_validity_hours * 3600
             report.compute_hash()
             
@@ -331,6 +440,53 @@ class TEEManager:
             
             self.attestation_reports[report.report_id] = report
             return report
+
+    def _to_verifier_payload(self, report: AttestationReport) -> Dict[str, Any]:
+        return {
+            "report_id": report.report_id,
+            "node_id": report.node_id,
+            "tee_type": report.tee_type.value,
+            "mrenclave": report.mrenclave,
+            "mrsigner": report.mrsigner,
+            "report_data": report.report_data,
+            "quote_hex": report.quote.hex() if report.quote else "",
+            "provider": report.provider,
+            "evidence_type": report.evidence_type,
+            "cert_chain_hash": report.cert_chain_hash,
+            "tcb_status": report.tcb_status,
+            "measurement_ts": report.measurement_ts,
+        }
+
+    def _local_verify_attestation_payload(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        quote = b""
+        quote_hex = str(payload.get("quote_hex", ""))
+        if quote_hex:
+            try:
+                quote = bytes.fromhex(quote_hex)
+            except Exception:
+                quote = b""
+
+        report = AttestationReport(
+            report_id=str(payload.get("report_id", uuid.uuid4().hex[:16])),
+            node_id=str(payload.get("node_id", "")),
+            tee_type=TEEType(str(payload.get("tee_type", TEEType.NONE.value))),
+            mrenclave=str(payload.get("mrenclave", "")),
+            mrsigner=str(payload.get("mrsigner", "")),
+            report_data=str(payload.get("report_data", "")),
+            quote=quote,
+            provider=str(payload.get("provider", "local")),
+            evidence_type=str(payload.get("evidence_type", "report")),
+            cert_chain_hash=str(payload.get("cert_chain_hash", "")),
+            tcb_status=str(payload.get("tcb_status", "unknown")),
+            measurement_ts=float(payload.get("measurement_ts") or time.time()),
+        )
+        is_valid = self._verify_attestation(report)
+        return {
+            "is_valid": is_valid,
+            "reason": "ok" if is_valid else "attestation_invalid",
+            "verified_by": "local_verifier",
+            "verified_at": time.time(),
+        }
     
     def _verify_attestation(self, report: AttestationReport) -> bool:
         """验证认证报告
@@ -346,7 +502,12 @@ class TEEManager:
         - NVIDIA CC: 验证 GPU attestation report
         - AWS Nitro: 验证 Nitro attestation document (NSM)
         """
-        import hmac as _hmac
+        node = self.nodes.get(report.node_id)
+        if not node:
+            return False
+
+        if node.tee_capability.tee_type != report.tee_type:
+            return False
         
         # 1. 格式验证：mrenclave/mrsigner 必须是有效的 hex 哈希（SHA-256 = 64 hex chars）
         if not report.mrenclave or len(report.mrenclave) < 64:
@@ -372,13 +533,13 @@ class TEEManager:
             quote_sig = report.quote[-32:]
             
             # 使用 mrsigner 作为验证密钥（真实环境中由 TEE 硬件签名）
-            expected_sig = _hmac.new(
-                report.mrsigner.encode()[:32],
-                quote_body,
-                hashlib.sha256,
-            ).digest()
+            attest_key = self._node_attestation_keys.get(report.node_id)
+            if not attest_key:
+                return False
+
+            expected_sig = hmac.new(attest_key, quote_body, hashlib.sha256).digest()
             
-            if not _hmac.compare_digest(quote_sig, expected_sig):
+            if not hmac.compare_digest(quote_sig, expected_sig):
                 return False
         
         # 3. 报告数据一致性
@@ -388,6 +549,115 @@ class TEEManager:
                 return False
         
         return True
+
+    def validate_attestation_for_order(
+        self,
+        node_id: str,
+        attestation: Dict[str, Any],
+        required_tee_type: Optional[TEEType] = None,
+        max_evidence_age_seconds: Optional[int] = None,
+        allowed_measurements: Optional[List[str]] = None,
+    ) -> Tuple[bool, str]:
+        """用于订单验证的严格 TEE 认证检查。"""
+        with self._lock:
+            node = self.nodes.get(node_id)
+            if not node:
+                return False, "TEE 节点不存在"
+
+            if required_tee_type and node.tee_capability.tee_type != required_tee_type:
+                return False, "TEE 类型不匹配"
+
+            if not isinstance(attestation, dict):
+                return False, "TEE 认证报告格式无效"
+
+            report_id = str(attestation.get("report_id", ""))
+            report = self.attestation_reports.get(report_id)
+            if not report:
+                return False, "TEE 认证报告不存在"
+
+            if report.node_id != node_id:
+                return False, "TEE 认证报告与节点不绑定"
+
+            if not report.is_valid:
+                return False, "TEE 认证报告无效"
+
+            if report.expiry <= time.time():
+                return False, "TEE 认证报告已过期"
+
+            # 关键字段一致性检查，防止伪造 dict 混淆
+            if str(attestation.get("mrenclave", "")) != report.mrenclave:
+                return False, "TEE mrenclave 不一致"
+            if str(attestation.get("mrsigner", "")) != report.mrsigner:
+                return False, "TEE mrsigner 不一致"
+            if str(attestation.get("report_hash", "")) != report.report_hash:
+                return False, "TEE report_hash 不一致"
+
+            # 证据年龄检查
+            age_limit = int(max_evidence_age_seconds or self.default_max_evidence_age_seconds)
+            measurement_ts = float(report.measurement_ts or report.verified_at)
+            age_seconds = max(0.0, time.time() - measurement_ts)
+            if age_seconds > age_limit:
+                return False, f"TEE 证据过旧: age={int(age_seconds)}s > {age_limit}s"
+
+            # 测量白名单检查
+            if allowed_measurements:
+                allow_set = {str(x).strip().lower() for x in allowed_measurements if str(x).strip()}
+                if allow_set and str(report.mrenclave).strip().lower() not in allow_set:
+                    return False, "TEE mrenclave 不在白名单"
+
+            # 节点绑定一致性（attestation dict 的 node_id 与请求 node_id 必须一致）
+            if str(attestation.get("node_id", node_id)) != node_id:
+                return False, "TEE attestation node_id 与订单绑定节点不一致"
+
+            return True, f"TEE 证明验证通过: {report_id[:16]}"
+
+    def request_session_key(self, node_id: str, attestation: Dict[str, Any], policy: Optional[Dict[str, Any]] = None) -> Tuple[bool, str, str]:
+        """KMS gate: attestation + policy 均通过才返回会话密钥。"""
+        policy = policy or {}
+        ok, msg = self.validate_attestation_for_order(
+            node_id=node_id,
+            attestation=attestation,
+            max_evidence_age_seconds=policy.get("max_evidence_age_seconds"),
+            allowed_measurements=policy.get("allowed_measurements"),
+        )
+        if not ok:
+            self._kms_audit_log.append({
+                "node_id": node_id,
+                "success": False,
+                "reason": f"attestation_failed:{msg}",
+                "timestamp": time.time(),
+            })
+            return False, "", msg
+
+        required_tcb = str(policy.get("required_tcb_status", "")).strip().lower()
+        if required_tcb:
+            report_id = str(attestation.get("report_id", ""))
+            report = self.attestation_reports.get(report_id)
+            tcb_status = (report.tcb_status if report else "").strip().lower()
+            if tcb_status != required_tcb:
+                reason = f"tcb_status_mismatch:{tcb_status}!={required_tcb}"
+                self._kms_audit_log.append({
+                    "node_id": node_id,
+                    "success": False,
+                    "reason": reason,
+                    "timestamp": time.time(),
+                })
+                return False, "", reason
+
+        session_key = secrets.token_hex(32)
+        self._kms_audit_log.append({
+            "node_id": node_id,
+            "success": True,
+            "reason": "ok",
+            "timestamp": time.time(),
+        })
+        return True, session_key, "ok"
+
+    def get_kms_audit_log(self, limit: int = 100) -> List[Dict[str, Any]]:
+        with self._lock:
+            if limit <= 0:
+                return []
+            return list(self._kms_audit_log[-limit:])
     
     def get_tee_premium(self, node_id: str) -> float:
         """获取 TEE 溢价率"""
@@ -795,6 +1065,36 @@ class VerifiableComputeEngine:
                 "verification_status": task.verification_status.value,
                 "verification_details": task.verification_details,
             }
+
+    def get_task_result(self, task_id: str) -> Optional[Dict[str, Any]]:
+        """兼容 RPC 的任务结果查询接口。"""
+        with self._lock:
+            task = self.tasks.get(task_id)
+            if not task:
+                return None
+
+            if task.status != "completed":
+                return {
+                    "task_id": task.task_id,
+                    "status": task.status,
+                    "verified": task.verification_status == VerificationStatus.VERIFIED,
+                }
+
+            # 返回第一份结果作为主结果
+            output = None
+            if task.execution_results:
+                first = next(iter(task.execution_results.values()))
+                output = first.get("result_data")
+
+            return {
+                "task_id": task.task_id,
+                "status": task.status,
+                "output": output,
+                "verified": task.verification_status == VerificationStatus.VERIFIED,
+                "verification_proof": task.verification_details,
+                "executed_by": task.assigned_nodes,
+                "completed_at": task.completed_at,
+            }
     
     def get_verification_config(self) -> Dict:
         """获取验证配置"""
@@ -880,4 +1180,5 @@ def get_tee_system():
         "tee_manager": _tee_manager,
         "verifiable_engine": _verifiable_engine,
         "tee_pricing": _tee_pricing,
+        "kms_gate": _tee_manager,
     }
