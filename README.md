@@ -475,8 +475,12 @@ python main.py --config config.mainnet.yaml --mining
 ### Docker Deployment
 
 ```bash
-docker-compose up -d
+powershell -ExecutionPolicy Bypass -File .\\scripts\\deploy_preflight.ps1 -Strict
+docker compose up -d --build
+docker compose ps
 ```
+
+If preflight reports "Docker daemon is not running", start Docker Desktop first and rerun the command.
 
 ---
 

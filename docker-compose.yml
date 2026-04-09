@@ -1,12 +1,10 @@
 # POUW Multi-Sector Chain - Docker Compose 配置
 #
 # 使用方法:
-#   docker-compose up -d                    # 启动所有服务
-#   docker-compose up -d node1 node2        # 启动指定节点
-#   docker-compose logs -f                  # 查看日志
-#   docker-compose down                     # 停止所有服务
-
-version: '3.8'
+#   docker compose up -d                    # 启动所有服务
+#   docker compose up -d node1 node2        # 启动指定节点
+#   docker compose logs -f                  # 查看日志
+#   docker compose down                     # 停止所有服务
 
 services:
   # ============== Bootstrap 节点 ==============
