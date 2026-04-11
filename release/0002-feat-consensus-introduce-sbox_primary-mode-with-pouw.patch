@@ -1,0 +1,358 @@
+From f9287f9c4b91bce50bcf0a7a71fc36c038510224 Mon Sep 17 00:00:00 2001
+From: hubunt <150658615+hubunt@users.noreply.github.com>
+Date: Sat, 11 Apr 2026 13:54:27 +0800
+Subject: [PATCH 2/2] feat(consensus): introduce sbox_primary mode with pouw
+ support ratio
+
+---
+ README.md                          | 14 +++++---
+ config.local.peer2.yaml            |  3 +-
+ config.mainnet.yaml                |  7 ++--
+ config.yaml                        |  7 ++--
+ core/consensus.py                  | 54 ++++++++++++++++++++++++++----
+ core/rpc_service.py                |  5 +++
+ main.py                            |  7 ++--
+ tests/test_consensus_mixed_mode.py | 35 +++++++++++++++++++
+ 8 files changed, 114 insertions(+), 18 deletions(-)
+
+diff --git a/README.md b/README.md
+index 8a7726b..83e21bf 100644
+--- a/README.md
++++ b/README.md
+@@ -193,9 +193,10 @@ In short, this is an attempt to make compute economically useful and socially me
+ 
+ ### Hybrid Consensus Mode (POUW + S-Box PoUW)
+ - Built-in mixed mode supports both POUW and SBOX_POUW in the same network
+-- `consensus.mode` controls strategy: `mixed`, `sbox_only`, `pouw_only`
++- `consensus.mode` controls strategy: `sbox_primary`, `mixed`, `sbox_only`, `pouw_only`
+ - `consensus.sbox_ratio` controls SBOX_POUW target share in mixed mode (0.0 - 1.0)
+-- Default deployment profile now uses `sbox_only` (single S-Box primary path)
++- `consensus.pouw_support_ratio` controls classic POUW injection share in `sbox_primary` mode (0.0 - 1.0)
++- Default deployment profile now uses `sbox_primary` (S-Box primary path + low-ratio POUW support)
+ - In `sbox_only`, each miner receives a deterministic random S-Box scoring quiz every 30 minutes:
+     - quiz changes score weights + score threshold + hash difficulty in the current window
+     - quiz id and window range are recorded in block `extra_data` for auditability
+@@ -693,8 +694,9 @@ Evidence links:
+ 
+ ### 6. Hybrid Consensus Policy
+ 
+-`consensus.mode` and `consensus.sbox_ratio` let operators tune production behavior:
++`consensus.mode`, `consensus.sbox_ratio`, and `consensus.pouw_support_ratio` let operators tune production behavior:
+ 
++- `sbox_primary`: prioritize SBOX_POUW and inject low-ratio POUW as market-stability support
+ - `mixed`: deterministic ratio-based mix of POUW and SBOX_POUW
+ - `sbox_only`: prioritize SBOX_POUW, fallback to POUW when unavailable
+ - `pouw_only`: run classic POUW path only
+@@ -703,8 +705,9 @@ Example:
+ 
+ ```yaml
+ consensus:
+-    mode: sbox_only
++    mode: sbox_primary
+     sbox_ratio: 0.50
++    pouw_support_ratio: 0.10
+     sbox_enabled: true
+ ```
+ 
+@@ -772,8 +775,9 @@ Default port: `8545`
+ 
+ `chain_getInfo` now includes mixed-consensus observability fields:
+ 
+-- `consensusMode`: `mixed` / `sbox_only` / `pouw_only`
++- `consensusMode`: `sbox_primary` / `mixed` / `sbox_only` / `pouw_only`
+ - `consensusSboxRatio`: configured SBOX_POUW target ratio
++- `consensusPouwSupportRatio`: configured POUW support ratio for `sbox_primary`
+ - `consensusSelectedDistribution`: rolling window stats for selected consensus type
+ - `consensusMinedDistribution`: rolling window stats for successfully mined consensus type
+ 
+diff --git a/config.local.peer2.yaml b/config.local.peer2.yaml
+index bee611f..c0d8e7a 100644
+--- a/config.local.peer2.yaml
++++ b/config.local.peer2.yaml
+@@ -46,8 +46,9 @@ logging:
+   console: true
+ 
+ consensus:
+-  mode: sbox_only
++  mode: sbox_primary
+   sbox_ratio: 0.50
++  pouw_support_ratio: 0.10
+   sbox_enabled: true
+   target_block_time: 30
+   difficulty_adjustment_interval: 10
+diff --git a/config.mainnet.yaml b/config.mainnet.yaml
+index 828d2e6..7f34a41 100644
+--- a/config.mainnet.yaml
++++ b/config.mainnet.yaml
+@@ -92,12 +92,15 @@ logging:
+ 
+ # Consensus parameters
+ consensus:
+-  # Consensus mode: mixed, sbox_only, pouw_only
+-  mode: sbox_only
++  # Consensus mode: sbox_primary, mixed, sbox_only, pouw_only
++  mode: sbox_primary
+ 
+   # In mixed mode, percentage of blocks to target SBOX_POUW (0.0 - 1.0)
+   sbox_ratio: 0.65
+ 
++  # In sbox_primary mode, percentage of blocks to inject classic POUW as support (0.0 - 1.0)
++  pouw_support_ratio: 0.08
++
+   # Globally enable/disable S-Box mining path
+   sbox_enabled: true
+ 
+diff --git a/config.yaml b/config.yaml
+index 7c25071..58d62de 100644
+--- a/config.yaml
++++ b/config.yaml
+@@ -116,12 +116,15 @@ logging:
+ 
+ # Consensus parameters (usually no need to modify)
+ consensus:
+-  # Consensus mode: mixed, sbox_only, pouw_only
+-  mode: sbox_only
++  # Consensus mode: sbox_primary, mixed, sbox_only, pouw_only
++  mode: sbox_primary
+ 
+   # In mixed mode, percentage of blocks to target SBOX_POUW (0.0 - 1.0)
+   sbox_ratio: 0.50
+ 
++  # In sbox_primary mode, percentage of blocks to inject classic POUW as support (0.0 - 1.0)
++  pouw_support_ratio: 0.10
++
+   # Globally enable/disable S-Box mining path
+   sbox_enabled: true
+ 
+diff --git a/core/consensus.py b/core/consensus.py
+index 0290b6f..b08640a 100644
+--- a/core/consensus.py
++++ b/core/consensus.py
+@@ -618,8 +618,9 @@ class ConsensusEngine:
+         # S-Box PoUW 挖矿引擎
+         self._sbox_miner = None  # 延迟初始化（需要知道活跃板块列表）
+         self._sbox_mining_enabled = True  # 默认启用 S-Box 挖矿
+-        self.consensus_mode = "sbox_only"  # mixed | sbox_only | pouw_only
++        self.consensus_mode = "sbox_primary"  # sbox_primary | mixed | sbox_only | pouw_only
+         self.consensus_sbox_ratio = 0.5  # mixed 模式下 SBOX_POUW 占比
++        self.consensus_pouw_support_ratio = 0.1  # sbox_primary 模式下 POUW 辅助占比
+         self._consensus_round = 0
+         self._recent_consensus_selected = deque(maxlen=200)
+         self._recent_consensus_mined = deque(maxlen=200)
+@@ -1068,13 +1069,14 @@ class ConsensusEngine:
+     def select_consensus(self) -> ConsensusType:
+         """选择共识类型。
+         
+-        支持三种策略：
++        支持四种策略：
++        - sbox_primary: S-Box 主路径，按辅助比例注入少量 POUW
+         - sbox_only: 优先并固定使用 SBOX_POUW（不可用则回退 POUW）
+         - pouw_only: 固定使用 POUW（异常时回退 PoW）
+         - mixed: 按配置比例在 SBOX_POUW/POUW 之间混用
+         """
+         mode = (self.consensus_mode or "mixed").lower()
+-        if mode not in {"mixed", "sbox_only", "pouw_only"}:
++        if mode not in {"sbox_primary", "mixed", "sbox_only", "pouw_only"}:
+             mode = "mixed"
+ 
+         # 保证 POUW 路径有任务可执行
+@@ -1111,6 +1113,34 @@ class ConsensusEngine:
+             self._record_selected_consensus(selected)
+             return selected
+ 
++        if mode == "sbox_primary":
++            if sbox_available and has_pouw:
++                latest = self.get_latest_block()
++                seed = f"{latest.hash if latest else 'genesis'}:{self.node_id}:{self._consensus_round}".encode()
++                roll = int(hashlib.sha256(seed).hexdigest()[:8], 16) / 0xFFFFFFFF
++                self._consensus_round += 1
++                if roll < self.consensus_pouw_support_ratio:
++                    selected = ConsensusType.POUW
++                    self._record_selected_consensus(selected)
++                    return selected
++                selected = ConsensusType.SBOX_POUW
++                self._record_selected_consensus(selected)
++                return selected
++
++            if sbox_available:
++                selected = ConsensusType.SBOX_POUW
++                self._record_selected_consensus(selected)
++                return selected
++            if has_pouw:
++                selected = ConsensusType.POUW
++                self._record_selected_consensus(selected)
++                return selected
++
++            self.log("⚠️ S-Box/POUW 均不可用，回退 PoW")
++            selected = ConsensusType.POW
++            self._record_selected_consensus(selected)
++            return selected
++
+         # mixed 模式：按确定性比例混用
+         if sbox_available and has_pouw:
+             latest = self.get_latest_block()
+@@ -1184,14 +1214,16 @@ class ConsensusEngine:
+         self,
+         mode: str = "mixed",
+         sbox_ratio: float = 0.5,
++        pouw_support_ratio: float = 0.1,
+         sbox_enabled: Optional[bool] = None,
+     ):
+         """配置共识模式。"""
+         mode = (mode or "mixed").lower().strip()
+-        if mode not in {"mixed", "sbox_only", "pouw_only"}:
++        if mode not in {"sbox_primary", "mixed", "sbox_only", "pouw_only"}:
+             mode = "mixed"
+ 
+         ratio = max(0.0, min(1.0, float(sbox_ratio)))
++        support_ratio = max(0.0, min(1.0, float(pouw_support_ratio)))
+ 
+         # 治理保护：限制单次 ratio 变化幅度，防止参数瞬时漂移。
+         max_ratio_step = float(self._mechanism_strategy.get("max_ratio_step", 1.0))
+@@ -1202,12 +1234,14 @@ class ConsensusEngine:
+ 
+         self.consensus_mode = mode
+         self.consensus_sbox_ratio = ratio
++        self.consensus_pouw_support_ratio = support_ratio
+         if sbox_enabled is not None:
+             self._sbox_mining_enabled = bool(sbox_enabled)
+ 
+         self.log(
+             f"⚙️ 共识模式已配置: mode={self.consensus_mode}, "
+             f"sbox_ratio={self.consensus_sbox_ratio:.2f}, "
++            f"pouw_support_ratio={self.consensus_pouw_support_ratio:.2f}, "
+             f"sbox_enabled={self._sbox_mining_enabled}"
+         )
+ 
+@@ -1242,11 +1276,17 @@ class ConsensusEngine:
+ 
+         mode = kwargs.get("mode")
+         ratio = kwargs.get("sbox_ratio")
++        support_ratio = kwargs.get("pouw_support_ratio")
+         sbox_enabled = kwargs.get("sbox_enabled")
+-        if mode is not None or ratio is not None or sbox_enabled is not None:
++        if mode is not None or ratio is not None or support_ratio is not None or sbox_enabled is not None:
+             self.configure_consensus_mode(
+                 mode=mode if mode is not None else self.consensus_mode,
+                 sbox_ratio=float(ratio) if ratio is not None else self.consensus_sbox_ratio,
++                pouw_support_ratio=(
++                    float(support_ratio)
++                    if support_ratio is not None
++                    else self.consensus_pouw_support_ratio
++                ),
+                 sbox_enabled=sbox_enabled,
+             )
+ 
+@@ -2391,7 +2431,8 @@ class ConsensusEngine:
+         sbox_status = "✅ S-Box PoUW 已启用" if self._sbox_mining_enabled else "❌ S-Box PoUW 未启用"
+         self.log(
+             f"⛏️ 挖矿线程已启动 (区块类型: task/idle/validation, mode={self.consensus_mode}, "
+-            f"sbox_ratio={self.consensus_sbox_ratio:.2f}) | {sbox_status}"
++            f"sbox_ratio={self.consensus_sbox_ratio:.2f}, "
++            f"pouw_support_ratio={self.consensus_pouw_support_ratio:.2f}) | {sbox_status}"
+         )
+     
+     def stop(self):
+@@ -2407,6 +2448,7 @@ class ConsensusEngine:
+             "consensus": self.current_consensus.value,
+             "consensus_mode": self.consensus_mode,
+             "consensus_sbox_ratio": self.consensus_sbox_ratio,
++            "consensus_pouw_support_ratio": self.consensus_pouw_support_ratio,
+             "pending_txs": len(self.pending_transactions),
+             "pending_pouw": len(self.pending_pouw),
+             "total_blocks_mined": self.total_blocks_mined,
+diff --git a/core/rpc_service.py b/core/rpc_service.py
+index d9ddb59..4fc9ee8 100644
+--- a/core/rpc_service.py
++++ b/core/rpc_service.py
+@@ -909,6 +909,11 @@ class NodeRPCService:
+             result["sboxMiningEnabled"] = getattr(self.consensus_engine, '_sbox_mining_enabled', False)
+             result["consensusMode"] = getattr(self.consensus_engine, 'consensus_mode', 'mixed')
+             result["consensusSboxRatio"] = getattr(self.consensus_engine, 'consensus_sbox_ratio', 0.5)
++            result["consensusPouwSupportRatio"] = getattr(
++                self.consensus_engine,
++                'consensus_pouw_support_ratio',
++                0.1,
++            )
+ 
+             # 混用共识观测统计（若共识引擎可提供）
+             try:
+diff --git a/main.py b/main.py
+index 5ca37a7..b6a734a 100644
+--- a/main.py
++++ b/main.py
+@@ -388,12 +388,14 @@ class POUWNode:
+             log.info(f"财库税率已配置: {rate*100:.1f}%")
+ 
+         # 配置混用共识模式
+-        consensus_mode = consensus_cfg.get("mode", "sbox_only")
++        consensus_mode = consensus_cfg.get("mode", "sbox_primary")
+         sbox_ratio = float(consensus_cfg.get("sbox_ratio", 0.5))
++        pouw_support_ratio = float(consensus_cfg.get("pouw_support_ratio", 0.1))
+         sbox_enabled = consensus_cfg.get("sbox_enabled", True)
+         self.consensus_engine.configure_consensus_mode(
+             mode=consensus_mode,
+             sbox_ratio=sbox_ratio,
++            pouw_support_ratio=pouw_support_ratio,
+             sbox_enabled=sbox_enabled,
+         )
+         
+@@ -402,7 +404,8 @@ class POUWNode:
+         
+         log.info(
+             f"共识引擎初始化: {node_id} (网络={network_type}, mode={self.consensus_engine.consensus_mode}, "
+-            f"sbox_ratio={self.consensus_engine.consensus_sbox_ratio:.2f})"
++            f"sbox_ratio={self.consensus_engine.consensus_sbox_ratio:.2f}, "
++            f"pouw_support_ratio={self.consensus_engine.consensus_pouw_support_ratio:.2f})"
+         )
+     
+     def _init_sector_ledger(self):
+diff --git a/tests/test_consensus_mixed_mode.py b/tests/test_consensus_mixed_mode.py
+index a08c9b9..5d1c4fe 100644
+--- a/tests/test_consensus_mixed_mode.py
++++ b/tests/test_consensus_mixed_mode.py
+@@ -48,6 +48,41 @@ def test_sbox_only_falls_back_to_pouw_when_sbox_unavailable():
+     assert engine.select_consensus() == ConsensusType.POUW
+ 
+ 
++def test_sbox_primary_prefers_sbox_when_support_ratio_is_zero():
++    engine = _make_engine()
++    engine.configure_consensus_mode(
++        mode="sbox_primary",
++        sbox_ratio=0.5,
++        pouw_support_ratio=0.0,
++        sbox_enabled=True,
++    )
++
++    engine.has_pouw_tasks = lambda: True
++    engine._get_sbox_miner = lambda: object()
++
++    assert engine.select_consensus() == ConsensusType.SBOX_POUW
++
++
++def test_sbox_primary_can_force_pouw_support_when_ratio_is_one():
++    engine = _make_engine()
++    engine.configure_consensus_mode(
++        mode="sbox_primary",
++        sbox_ratio=0.5,
++        pouw_support_ratio=1.0,
++        sbox_enabled=True,
++    )
++
++    engine.has_pouw_tasks = lambda: True
++    engine._get_sbox_miner = lambda: object()
++
++    class _Latest:
++        hash = "h" * 64
++
++    engine.get_latest_block = lambda: _Latest()
++
++    assert engine.select_consensus() == ConsensusType.POUW
++
++
+ def test_pouw_only_uses_pouw_even_if_sbox_available():
+     engine = _make_engine()
+     engine.configure_consensus_mode(mode="pouw_only", sbox_ratio=0.5, sbox_enabled=True)
+-- 
+2.46.0.windows.1
+
