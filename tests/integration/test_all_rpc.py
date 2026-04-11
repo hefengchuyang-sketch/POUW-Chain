@@ -7,23 +7,24 @@ Tests ALL registered RPC methods on http://127.0.0.1:8545
 import json
 import urllib.request
 import urllib.error
-import ssl
 import time
 import sys
 from datetime import datetime
+import rpc_auth_helper as auth_helper
 
-RPC_URL = "https://127.0.0.1:8545"
-_SSL_CTX = ssl.create_default_context()
-_SSL_CTX.check_hostname = False
-_SSL_CTX.verify_mode = ssl.CERT_NONE
+RPC_URL = auth_helper.get_default_rpc_url()
+_SSL_CTX = auth_helper.create_insecure_ssl_context()
 WALLET_ADDRESS = "MAIN_OSFMLGDAAZEXEENLLTUBER6W4FHI3PNJ"
 OUTPUT_FILE = r"c:\Users\17006\Desktop\maincoin\test_rpc_results.txt"
+_ACTIVE_API_KEY = None
+_API_KEY_CANDIDATES = auth_helper.build_api_key_candidates()
 
 request_id = 0
 
 def rpc_call(method, params=None):
     """Make a JSON-RPC call and return (success, result_or_error, elapsed_ms)"""
     global request_id
+    global _ACTIVE_API_KEY
     request_id += 1
     
     payload = {
@@ -34,35 +35,43 @@ def rpc_call(method, params=None):
     }
     
     data = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(
-        RPC_URL,
-        data=data,
-        headers={"Content-Type": "application/json"}
-    )
-    
-    start = time.time()
-    try:
-        with urllib.request.urlopen(req, timeout=15, context=_SSL_CTX) as resp:
-            body = resp.read().decode("utf-8")
-            elapsed = (time.time() - start) * 1000
-            result = json.loads(body)
-            if "error" in result and result["error"]:
-                return False, result["error"], elapsed
-            return True, result.get("result"), elapsed
-    except urllib.error.HTTPError as e:
-        elapsed = (time.time() - start) * 1000
+    keys_to_try = auth_helper.build_key_try_list(_ACTIVE_API_KEY, _API_KEY_CANDIDATES)
+
+    for api_key in keys_to_try:
+        headers = auth_helper.build_rpc_headers(api_key=api_key)
+        req = urllib.request.Request(
+            RPC_URL,
+            data=data,
+            headers=headers
+        )
+
+        start = time.time()
         try:
-            body = e.read().decode("utf-8")
-            err = json.loads(body)
-            return False, err.get("error", body), elapsed
-        except:
-            return False, f"HTTP {e.code}: {e.reason}", elapsed
-    except urllib.error.URLError as e:
-        elapsed = (time.time() - start) * 1000
-        return False, f"URLError: {e.reason}", elapsed
-    except Exception as e:
-        elapsed = (time.time() - start) * 1000
-        return False, f"Exception: {str(e)}", elapsed
+            with urllib.request.urlopen(req, timeout=15, context=_SSL_CTX) as resp:
+                body = resp.read().decode("utf-8")
+                elapsed = (time.time() - start) * 1000
+                result = json.loads(body)
+                _ACTIVE_API_KEY = api_key
+                if "error" in result and result["error"]:
+                    return False, result["error"], elapsed
+                return True, result.get("result"), elapsed
+        except urllib.error.HTTPError as e:
+            elapsed = (time.time() - start) * 1000
+            if e.code == 403:
+                continue
+            try:
+                body = e.read().decode("utf-8")
+                err = json.loads(body)
+                return False, err.get("error", body), elapsed
+            except Exception:
+                return False, f"HTTP {e.code}: {e.reason}", elapsed
+        except urllib.error.URLError as e:
+            elapsed = (time.time() - start) * 1000
+            return False, f"URLError: {e.reason}", elapsed
+        except Exception as e:
+            elapsed = (time.time() - start) * 1000
+            return False, f"Exception: {str(e)}", elapsed
+    return False, "authentication failed", 0.0
 
 
 # ============================================================

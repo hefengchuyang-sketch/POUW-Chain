@@ -20,6 +20,7 @@ POUW Multi-Sector Chain - 主启动脚本
 import os
 import sys
 import time
+import copy
 import signal
 import asyncio
 import argparse
@@ -182,7 +183,8 @@ DEFAULT_CONFIG = {
 
 def load_config(config_path: str = None) -> Dict:
     """加载配置文件。"""
-    config = DEFAULT_CONFIG.copy()
+    # 使用深拷贝避免嵌套 dict 共享引用，防止配置污染默认模板
+    config = copy.deepcopy(DEFAULT_CONFIG)
     
     if config_path and os.path.exists(config_path):
         if HAS_YAML:
@@ -386,7 +388,7 @@ class POUWNode:
             log.info(f"财库税率已配置: {rate*100:.1f}%")
 
         # 配置混用共识模式
-        consensus_mode = consensus_cfg.get("mode", "mixed")
+        consensus_mode = consensus_cfg.get("mode", "sbox_only")
         sbox_ratio = float(consensus_cfg.get("sbox_ratio", 0.5))
         sbox_enabled = consensus_cfg.get("sbox_enabled", True)
         self.consensus_engine.configure_consensus_mode(
@@ -442,6 +444,7 @@ class POUWNode:
             admin_key = os.environ.get("POUW_ADMIN_KEY", "") or self.config.get("api", {}).get("admin_key", "")
             cors_origins = rpc_config.get("cors_origins", [])
             rate_limit = rpc_config.get("rate_limit", 200)
+            allowed_methods = rpc_config.get("allowed_methods", [])
             
             self.rpc_server = RPCServer(
                 host=rpc_config["host"],
@@ -452,6 +455,7 @@ class POUWNode:
                 admin_key=admin_key,
                 cors_origins=cors_origins,
                 rate_limit=rate_limit,
+                allowed_methods=allowed_methods,
             )
             
             # 注入核心依赖
@@ -463,8 +467,8 @@ class POUWNode:
             try:
                 from core.main_transfer import MainTransferEngine
                 self.rpc_server.rpc_service.main_transfer_engine = MainTransferEngine()
-            except Exception:
-                pass
+            except Exception as e:
+                log.warn(f"MAIN 转账引擎初始化失败，将禁用 MAIN 转账: {e}")
             
             # 注入扩展模块
             svc = self.rpc_server.rpc_service

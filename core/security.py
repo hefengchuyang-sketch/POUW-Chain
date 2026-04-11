@@ -552,9 +552,8 @@ PUBLIC_RPC_METHODS = {
     "blockchain_getHeight", "blockchain_getBlock", "blockchain_getLatestBlocks",
     # 交易查询
     "tx_get", "tx_getStatus",
-    # 账户查询
-    "account_getBalance", "account_getTransactions", "account_traceUTXO", "account_getUTXOs",
-    "account_getSubAddresses",
+    # 账户查询（敏感流水/子地址需认证）
+    "account_getBalance", "account_traceUTXO", "account_getUTXOs",
     # 网络状态
     "network_getStatus", "network_getPeerList",
     # 统计 / 仪表盘
@@ -591,8 +590,7 @@ PUBLIC_RPC_METHODS = {
     "monitor_getHealth",
     # RPC 元信息（仅返回公开方法列表）
     "rpc_listMethods",
-    # 钱包只读查询
-    "wallet_getInfo", "wallet_getBalance",
+    # 钱包只读查询（含地址与余额，需认证）
     # 矿工行为报告（只读）
     "miner_getBehaviorReport",
     # 市场报价查询

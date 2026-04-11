@@ -33,6 +33,8 @@ Start here if you need to run, debug, or extend the system.
 4. `OPERATIONS.md` and `DEPLOYMENT.md` (ops/deployment)
 5. `SECURITY_HARDENING.md` (production hardening checklist)
 6. `SECURITY_BASELINE_CHECKLIST.md` (release gate and minimum controls)
+7. `RPC_PERMISSION_BASELINE.md` (sensitive RPC exposure baseline)
+8. `CODEBASE_REVIEW_2026-04-10.md` (integrity/rationality review and refactor plan)
 
 Quick regression command:
 

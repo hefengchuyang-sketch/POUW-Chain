@@ -578,10 +578,11 @@ class ConsensusEngine:
         )
         self.current_work_threshold = 50.0
         self._idle_penalty_window = 6
+        self._consecutive_benchmark_blocks = 0
         # 使用板块对应的基础奖励（而非默认 50）
         sector_base = ChainParams.get_sector_base_rewards().get(sector, 1.0)
         self.reward_calculator = RewardCalculator(base_reward=sector_base)
-        self.pouw_executor = PoUWExecutor(min_score_threshold=0.3)
+        self.pouw_executor = PoUWExecutor(min_score_threshold=0.5)
         
         # POUW 任务轮转表（循环使用不同任务类型）
         self._pouw_task_types = [
@@ -617,11 +618,14 @@ class ConsensusEngine:
         # S-Box PoUW 挖矿引擎
         self._sbox_miner = None  # 延迟初始化（需要知道活跃板块列表）
         self._sbox_mining_enabled = True  # 默认启用 S-Box 挖矿
-        self.consensus_mode = "mixed"  # mixed | sbox_only | pouw_only
+        self.consensus_mode = "sbox_only"  # mixed | sbox_only | pouw_only
         self.consensus_sbox_ratio = 0.5  # mixed 模式下 SBOX_POUW 占比
         self._consensus_round = 0
         self._recent_consensus_selected = deque(maxlen=200)
         self._recent_consensus_mined = deque(maxlen=200)
+        self._sbox_quiz_interval_seconds = 1800  # 每 30 分钟更新一次评分题
+        self._sbox_quiz_window_id = -1
+        self._sbox_quiz_payload: Dict[str, Any] = {}
 
         # 机制策略（版本化 + 灰度/回滚）
         self._mechanism_strategy = {
@@ -1287,8 +1291,9 @@ class ConsensusEngine:
             self._pouw_task_index += 1
             
             try:
-                # 基准任务难度跟随链上难度动态变化（设上限防止空载时过度消耗）。
-                baseline_difficulty = max(2, min(4, int(self.current_difficulty)))
+                # 基准任务难度跟随链上难度动态变化。
+                # 适度抬升上限，降低低负载阶段“过易出块”概率。
+                baseline_difficulty = max(3, min(6, int(self.current_difficulty)))
                 task_seed = hashlib.sha256(
                     f"{selector_seed}:{task_type.value}".encode()
                 ).hexdigest()
@@ -1349,19 +1354,24 @@ class ConsensusEngine:
         """计算动态工作量门槛（含无单场景扰动）。"""
         threshold = float(self.current_work_threshold)
 
-        # 无单场景：使用最小地板 + 可验证扰动，避免长期模板化。
+        # 无单场景：使用更高地板 + 可验证扰动，降低模板化与低负载过易出块风险。
         has_real_orders = len(block.transactions or []) > 0
         if not has_real_orders:
             latest = self.get_latest_block()
             seed = f"{latest.hash if latest else 'genesis'}:{block.height}:{self.node_id}:idle"
             jitter_src = int(hashlib.sha256(seed.encode()).hexdigest()[:8], 16)
             jitter = ((jitter_src % 1000) / 1000.0 - 0.5) * 8.0  # [-4, +4]
-            threshold = max(22.0, min(threshold, 46.0)) + jitter
+            threshold = max(35.0, min(threshold, 68.0)) + jitter
+
+            # 连续基准块惩罚：无真实订单持续越久，门槛越高，避免长期“顺滑出块”。
+            streak = max(0, int(getattr(self, "_consecutive_benchmark_blocks", 0)))
+            if streak > 0:
+                threshold *= min(1.35, 1.0 + 0.04 * streak)
 
         if block.block_type == PoUWBlockType.VALIDATION_BLOCK.value:
-            threshold *= 0.75
+            threshold *= 0.90
         elif block.block_type == PoUWBlockType.IDLE_BLOCK.value:
-            threshold *= 0.85
+            threshold *= 0.95
 
         return round(max(20.0, min(180.0, threshold)), 2)
 
@@ -1499,6 +1509,77 @@ class ConsensusEngine:
                 self.log(f"S-Box 挖矿引擎初始化失败: {e}")
                 self._sbox_mining_enabled = False
         return self._sbox_miner
+
+    @staticmethod
+    def _normalize_sbox_weights(raw_weights: Dict[str, float]) -> Dict[str, float]:
+        """归一化评分权重，确保和为 1。"""
+        total = sum(max(0.01, float(v)) for v in raw_weights.values())
+        if total <= 0:
+            return {"nonlinearity": 0.34, "diff_uniformity": 0.33, "avalanche": 0.33}
+        return {k: round(max(0.01, float(v)) / total, 6) for k, v in raw_weights.items()}
+
+    def _apply_sbox_halfhour_quiz(self, miner, block: Block, prev_hash: str) -> Dict[str, Any]:
+        """应用每 30 分钟一次的随机评分题（按矿机确定性生成）。"""
+        now_ts = int(time.time())
+        window_id = now_ts // self._sbox_quiz_interval_seconds
+        if window_id == self._sbox_quiz_window_id and self._sbox_quiz_payload:
+            return dict(self._sbox_quiz_payload)
+
+        window_start = window_id * self._sbox_quiz_interval_seconds
+        window_end = window_start + self._sbox_quiz_interval_seconds
+        seed_input = f"{prev_hash}:{self.node_id}:{window_id}:{block.height}"
+        seed_hex = hashlib.sha256(seed_input.encode()).hexdigest()
+
+        # 本窗口随机评分题：动态调整 3 个评分权重。
+        w_non = 20 + (int(seed_hex[0:4], 16) % 41)   # [20,60]
+        w_du = 20 + (int(seed_hex[4:8], 16) % 41)    # [20,60]
+        w_ae = 20 + (int(seed_hex[8:12], 16) % 41)   # [20,60]
+        quiz_weights = self._normalize_sbox_weights({
+            "nonlinearity": float(w_non),
+            "diff_uniformity": float(w_du),
+            "avalanche": float(w_ae),
+        })
+
+        base_threshold = float(getattr(miner.params, "score_threshold", 0.55))
+        threshold_bias = ((int(seed_hex[12:16], 16) % 9) - 4) * 0.01  # [-0.04, +0.04]
+        threshold = max(
+            miner.params.min_score_threshold,
+            min(miner.params.max_score_threshold, base_threshold + threshold_bias),
+        )
+
+        base_hash_diff = int(max(2, getattr(miner.params, "hash_difficulty", self.current_difficulty)))
+        hash_bonus = int(seed_hex[16:18], 16) % 2  # 0 or 1
+        hash_difficulty = max(
+            miner.params.min_hash_difficulty,
+            min(miner.params.max_hash_difficulty, base_hash_diff + hash_bonus),
+        )
+
+        # 同步本窗口评分题到所有板块矿工，确保同一矿机在窗口内题目一致。
+        miner.params.score_weights = dict(quiz_weights)
+        miner.params.score_threshold = float(threshold)
+        miner.params.hash_difficulty = int(hash_difficulty)
+        for sector_miner in miner.sector_miners.values():
+            sector_miner.params.score_weights = dict(quiz_weights)
+            sector_miner.params.score_threshold = float(threshold)
+            sector_miner.params.hash_difficulty = int(hash_difficulty)
+
+        payload = {
+            "quiz_id": seed_hex[:16],
+            "window_id": int(window_id),
+            "window_start": int(window_start),
+            "window_end": int(window_end),
+            "weights": dict(quiz_weights),
+            "score_threshold": round(float(threshold), 6),
+            "hash_difficulty": int(hash_difficulty),
+        }
+        self._sbox_quiz_window_id = int(window_id)
+        self._sbox_quiz_payload = dict(payload)
+        self.log(
+            f"🧩 S-Box 评分题更新: quiz={payload['quiz_id']}, "
+            f"window={payload['window_start']}~{payload['window_end']}, "
+            f"threshold={payload['score_threshold']:.4f}, hash_diff={payload['hash_difficulty']}"
+        )
+        return payload
     
     def mine_sbox_pouw(self, block: Block) -> bool:
         """执行 S-Box PoUW 挖矿。
@@ -1523,6 +1604,8 @@ class ConsensusEngine:
         latest = self.get_latest_block()
         if not latest:
             return False
+
+        quiz_payload = self._apply_sbox_halfhour_quiz(miner, block, latest.hash)
         
         # 1. 多板块并行 S-Box 挖矿
         selected_block, all_blocks, selected_sector = miner.mine_parallel(
@@ -1547,6 +1630,19 @@ class ConsensusEngine:
         block.sbox_score_threshold = selected_block.score_threshold
         block.sbox_selected_sector = selected_sector
         block.sbox_all_sectors = [b.sector for b in all_blocks]
+        block.extra_data = json.dumps(
+            {
+                "sbox_quiz": {
+                    "quiz_id": quiz_payload.get("quiz_id", ""),
+                    "window_start": quiz_payload.get("window_start", 0),
+                    "window_end": quiz_payload.get("window_end", 0),
+                    "score_threshold": quiz_payload.get("score_threshold", 0.0),
+                    "hash_difficulty": quiz_payload.get("hash_difficulty", 0),
+                }
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
         
         # 3. 同时收集传统 POUW 证明（如果有）
         with self._lock:
@@ -1736,6 +1832,15 @@ class ConsensusEngine:
             # 清理已打包交易
             packed_count = len(block.transactions)
             self.pending_transactions = self.pending_transactions[packed_count:]
+
+            # 连续基准块计数：用于低负载阶段的动态门槛惩罚。
+            if len(block.transactions or []) > 0:
+                self._consecutive_benchmark_blocks = 0
+            else:
+                self._consecutive_benchmark_blocks = min(
+                    self._consecutive_benchmark_blocks + 1,
+                    50,
+                )
             
             # 记录
             self.difficulty_adjuster.record_block(mining_time)

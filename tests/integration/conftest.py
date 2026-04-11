@@ -8,11 +8,23 @@ need a live node.
 """
 import pytest
 
+
+def pytest_addoption(parser):
+    parser.addoption(
+        "--run-integration",
+        action="store_true",
+        default=False,
+        help="Run integration tests that require a live local node",
+    )
+
 def pytest_collection_modifyitems(config, items):
-    """Skip integration tests in this directory unless the node is reachable."""
+    """Mark integration tests and gate them behind an explicit flag + node reachability."""
     import urllib.request
     import ssl
+
+    run_integration = config.getoption("--run-integration")
     node_available = False
+
     # 尝试 HTTP 和 HTTPS（节点可能启用了自签名 TLS）
     for url in ["http://127.0.0.1:8545", "https://127.0.0.1:8545"]:
         try:
@@ -27,10 +39,17 @@ def pytest_collection_modifyitems(config, items):
         except Exception:
             pass
 
-    if not node_available:
-        skip = pytest.mark.skip(reason="需要运行中的节点 (python main.py)")
-        integration_dir = str(__file__).replace("\\", "/").rsplit("/", 1)[0]
-        for item in items:
-            item_path = str(item.fspath).replace("\\", "/")
-            if item_path.startswith(integration_dir):
-                item.add_marker(skip)
+    integration_dir = str(__file__).replace("\\", "/").rsplit("/", 1)[0]
+    for item in items:
+        item_path = str(item.fspath).replace("\\", "/")
+        if not item_path.startswith(integration_dir):
+            continue
+
+        item.add_marker(pytest.mark.integration)
+
+        if not run_integration:
+            item.add_marker(pytest.mark.skip(reason="集成测试默认关闭；使用 --run-integration 显式开启"))
+            continue
+
+        if not node_available:
+            item.add_marker(pytest.mark.skip(reason="需要运行中的节点 (python main.py)"))

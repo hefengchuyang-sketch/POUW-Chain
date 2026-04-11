@@ -48,7 +48,7 @@ class WalletHandler(RPCHandlerBase):
         self.register(
             "wallet_getInfo", self.svc._wallet_get_info,
             "获取当前钱包信息",
-            RPCPermission.PUBLIC
+            RPCPermission.USER
         )
         self.register(
             "wallet_unlock", self.svc._wallet_unlock,
@@ -77,4 +77,4 @@ class WalletHandler(RPCHandlerBase):
         )
         
         # 注意: wallet_getBalance/wallet_getTransactions 是别名，
-        # 指向 account 域方法，保留在 rpc_service.py 中注册
+        # 指向 account 域方法，已迁移到 account_handler.py 中注册

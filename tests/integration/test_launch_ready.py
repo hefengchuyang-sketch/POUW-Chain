@@ -4,28 +4,40 @@ Tests ALL frontend RPC methods against the running backend
 """
 import json
 import urllib.request
-import ssl
+import urllib.error
 import sys
 import time
+import rpc_auth_helper as auth_helper
 
-RPC_URL = "https://127.0.0.1:8545"
-_SSL_CTX = ssl.create_default_context()
-_SSL_CTX.check_hostname = False
-_SSL_CTX.verify_mode = ssl.CERT_NONE
+RPC_URL = auth_helper.get_default_rpc_url()
+_SSL_CTX = auth_helper.create_insecure_ssl_context()
+_ACTIVE_API_KEY = None
+_API_KEY_CANDIDATES = auth_helper.build_api_key_candidates()
 
 def rpc(method, params=None):
+    global _ACTIVE_API_KEY
     data = json.dumps({
         "jsonrpc": "2.0",
         "method": method,
         "params": params if isinstance(params, dict) else (params or {}),
         "id": 1
     }).encode()
-    req = urllib.request.Request(RPC_URL, data=data, headers={"Content-Type": "application/json"})
-    try:
-        resp = urllib.request.urlopen(req, timeout=10, context=_SSL_CTX)
-        return json.loads(resp.read())
-    except Exception as e:
-        return {"connection_error": str(e)}
+    keys_to_try = auth_helper.build_key_try_list(_ACTIVE_API_KEY, _API_KEY_CANDIDATES)
+
+    for api_key in keys_to_try:
+        headers = auth_helper.build_rpc_headers(api_key=api_key)
+        req = urllib.request.Request(RPC_URL, data=data, headers=headers)
+        try:
+            resp = urllib.request.urlopen(req, timeout=10, context=_SSL_CTX)
+            _ACTIVE_API_KEY = api_key
+            return json.loads(resp.read())
+        except urllib.error.HTTPError as e:
+            if e.code == 403:
+                continue
+            return {"connection_error": str(e)}
+        except Exception as e:
+            return {"connection_error": str(e)}
+    return {"connection_error": "authentication failed"}
 
 # All frontend rpcCall methods with their exact params
 FRONTEND_METHODS = [

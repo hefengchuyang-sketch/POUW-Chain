@@ -1,5 +1,6 @@
 import tempfile
 import time
+import json
 from pathlib import Path
 
 from core.compute_market_v3 import (
@@ -41,6 +42,27 @@ def _mk_miner(miner_id: str, available_gpus: int, completed: int, failed: int, s
         tasks_failed=failed,
         last_heartbeat=time.time(),
     )
+
+
+def _persist_miner(market: ComputeMarketV3, miner: MinerNode) -> None:
+    with market._conn() as conn:
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO miners
+            (miner_id, miner_data, sector, status, available_gpus, combined_score, last_heartbeat, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                miner.miner_id,
+                json.dumps(miner.to_dict()),
+                miner.sector,
+                miner.status.value,
+                miner.available_gpus,
+                miner.combined_score,
+                miner.last_heartbeat,
+                time.time(),
+            ),
+        )
 
 
 def test_dispatch_weight_prefers_reliable_miner():
@@ -144,5 +166,51 @@ def test_match_order_assigns_required_gpus_using_weighted_dispatch():
         assert ok, msg
         assert sum(order.assigned_gpus.values()) == 2
         assert order.status.value == "matched"
+    finally:
+        market.close()
+
+
+def test_halfhour_trap_penalizes_unsubmitted_dispatch_weight():
+    market = ComputeMarketV3(db_path=_mk_db())
+    try:
+        miner = _mk_miner("trap_penalty", 2, completed=12, failed=1, score=0.8)
+        _persist_miner(market, miner)
+        c = market._protocol_challenge_score("order_trap_penalty", miner)
+
+        # 未提交当前窗口陷阱题时，会触发降权倍率。
+        w_without_submit = market._compute_dispatch_weight(miner, c)
+
+        ok, trap = market.get_performance_trap(miner.miner_id)
+        assert ok
+        answer = market._performance_traps[miner.miner_id]["expected_answer_hash"]
+        ok_submit, res = market.submit_performance_trap(miner.miner_id, trap["challenge_id"], answer)
+        assert ok_submit, res
+
+        refreshed = market.get_miner(miner.miner_id)
+        assert refreshed is not None
+        w_after_submit = market._compute_dispatch_weight(refreshed, c)
+        assert w_after_submit > w_without_submit
+    finally:
+        market.close()
+
+
+def test_halfhour_trap_submission_updates_system_score():
+    market = ComputeMarketV3(db_path=_mk_db())
+    try:
+        miner = _mk_miner("trap_score_update", 1, completed=8, failed=2, score=0.6)
+        _persist_miner(market, miner)
+
+        ok, trap = market.get_performance_trap(miner.miner_id)
+        assert ok
+        answer = market._performance_traps[miner.miner_id]["expected_answer_hash"]
+        ok_submit, res = market.submit_performance_trap(miner.miner_id, trap["challenge_id"], answer)
+        assert ok_submit, res
+
+        updated = market.get_miner(miner.miner_id)
+        assert updated is not None
+        assert updated.trap_total == 1
+        assert updated.trap_passed == 1
+        assert updated.trap_score > 0.5
+        assert updated.system_score > 0.0
     finally:
         market.close()

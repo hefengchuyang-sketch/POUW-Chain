@@ -7,12 +7,18 @@ import requests
 import sys
 import traceback
 from datetime import datetime
+import rpc_auth_helper as auth_helper
 
-RPC_URL = "https://127.0.0.1:8545/rpc"
+RPC_URL = auth_helper.get_default_rpc_url("/rpc")
 RESULTS = []
 rpc_id = 1
+_ACTIVE_API_KEY = None
+_API_KEY_CANDIDATES = auth_helper.build_api_key_candidates()
 
 def rpc_call(method, params=None):
+    global _ACTIVE_API_KEY
+    keys_to_try = auth_helper.build_key_try_list(_ACTIVE_API_KEY, _API_KEY_CANDIDATES)
+
     global rpc_id
     payload = {
         "jsonrpc": "2.0",
@@ -21,16 +27,18 @@ def rpc_call(method, params=None):
         "params": params or {}
     }
     rpc_id += 1
-    headers = {
-        "Content-Type": "application/json",
-        "X-Auth-User": "test_wallet_address"
-    }
-    try:
-        resp = requests.post(RPC_URL, json=payload, headers=headers, timeout=10, verify=False)
-        data = resp.json()
-        return data
-    except Exception as e:
-        return {"error": {"code": -1, "message": str(e)}, "id": rpc_id - 1}
+    for api_key in keys_to_try:
+        headers = auth_helper.build_rpc_headers(api_key=api_key, auth_user="test_wallet_address")
+        try:
+            resp = requests.post(RPC_URL, json=payload, headers=headers, timeout=10, verify=False)
+            if resp.status_code == 403:
+                continue
+            data = resp.json()
+            _ACTIVE_API_KEY = api_key
+            return data
+        except Exception as e:
+            return {"error": {"code": -1, "message": str(e)}, "id": rpc_id - 1}
+    return {"error": {"code": -32003, "message": "authentication failed"}, "id": rpc_id - 1}
 
 def _test_method(name, method, params, notes=""):
     print(f"\n{'='*60}")

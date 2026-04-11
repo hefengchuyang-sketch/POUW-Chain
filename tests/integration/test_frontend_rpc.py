@@ -1,14 +1,17 @@
 """Test all RPC methods that the frontend actually calls"""
 import json
 import urllib.request
-import ssl
+import urllib.error
 import sys
+import rpc_auth_helper as auth_helper
 
-_SSL_CTX = ssl.create_default_context()
-_SSL_CTX.check_hostname = False
-_SSL_CTX.verify_mode = ssl.CERT_NONE
+RPC_URL = auth_helper.get_default_rpc_url()
+_SSL_CTX = auth_helper.create_insecure_ssl_context()
+_ACTIVE_API_KEY = None
+_API_KEY_CANDIDATES = auth_helper.build_api_key_candidates()
 
 def call_rpc(method, params=None):
+    global _ACTIVE_API_KEY
     if params is None:
         params = {}
     data = json.dumps({
@@ -17,19 +20,31 @@ def call_rpc(method, params=None):
         "params": params,
         "id": 1
     }).encode()
-    req = urllib.request.Request(
-        "https://127.0.0.1:8545",
-        data=data,
-        headers={"Content-Type": "application/json"}
-    )
-    try:
-        resp = urllib.request.urlopen(req, timeout=10, context=_SSL_CTX)
-        result = json.loads(resp.read().decode())
-        if "error" in result:
-            return "ERROR", result["error"].get("code", 0), result["error"]["message"]
-        return "OK", 0, str(result.get("result", {}))[:100]
-    except Exception as e:
-        return "FAIL", -1, str(e)[:100]
+    keys_to_try = auth_helper.build_key_try_list(_ACTIVE_API_KEY, _API_KEY_CANDIDATES)
+
+    last_err = None
+    for api_key in keys_to_try:
+        headers = auth_helper.build_rpc_headers(api_key=api_key)
+        req = urllib.request.Request(
+            RPC_URL,
+            data=data,
+            headers=headers
+        )
+        try:
+            resp = urllib.request.urlopen(req, timeout=10, context=_SSL_CTX)
+            result = json.loads(resp.read().decode())
+            _ACTIVE_API_KEY = api_key
+            if "error" in result:
+                return "ERROR", result["error"].get("code", 0), result["error"]["message"]
+            return "OK", 0, str(result.get("result", {}))[:100]
+        except urllib.error.HTTPError as e:
+            if e.code == 403:
+                last_err = e
+                continue
+            return "FAIL", -1, str(e)[:100]
+        except Exception as e:
+            return "FAIL", -1, str(e)[:100]
+    return "FAIL", -1, str(last_err)[:100] if last_err else "auth failed"
 
 # All methods the frontend actually calls (extracted from api/index.ts)
 tests = [

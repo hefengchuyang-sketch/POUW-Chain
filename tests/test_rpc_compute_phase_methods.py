@@ -162,6 +162,25 @@ def test_compute_submit_order_prefers_compute_market_v3():
     assert res["orderId"] == "v3_o1"
 
 
+def test_compute_submit_order_returns_failed_when_v3_required_and_v3_errors(monkeypatch):
+    svc = _bare_service()
+    monkeypatch.setenv("POUW_COMPUTE_V3_REQUIRED", "true")
+
+    def _raise(**kwargs):
+        raise RuntimeError("boom")
+
+    svc.compute_market = SimpleNamespace(create_order=_raise)
+    res = svc._compute_submit_order(
+        gpu_type="RTX4090",
+        gpu_count=1,
+        price_per_hour=1.0,
+        duration_hours=1,
+        buyer_address="MAIN_buyer",
+    )
+    assert res["status"] == "failed"
+    assert res["error"] == "compute_v3_required"
+
+
 def test_compute_get_order_and_market_prefer_compute_market_v3():
     svc = _bare_service()
 

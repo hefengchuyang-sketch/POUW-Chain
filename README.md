@@ -195,6 +195,10 @@ In short, this is an attempt to make compute economically useful and socially me
 - Built-in mixed mode supports both POUW and SBOX_POUW in the same network
 - `consensus.mode` controls strategy: `mixed`, `sbox_only`, `pouw_only`
 - `consensus.sbox_ratio` controls SBOX_POUW target share in mixed mode (0.0 - 1.0)
+- Default deployment profile now uses `sbox_only` (single S-Box primary path)
+- In `sbox_only`, each miner receives a deterministic random S-Box scoring quiz every 30 minutes:
+    - quiz changes score weights + score threshold + hash difficulty in the current window
+    - quiz id and window range are recorded in block `extra_data` for auditability
 - Automatic fallback keeps liveness: S-Box unavailable -> POUW, both unavailable -> PoW fallback
 - Strategy governance is versioned and rollbackable:
     - `chain_updateMechanismStrategy` supports version/rollout/max_ratio_step updates
@@ -319,12 +323,15 @@ Use the role-based docs index as entry point:
 
 - [Docs Home (Reviewer / Investor / Developer paths)](docs/README.md)
 - [Security Baseline Checklist](docs/SECURITY_BASELINE_CHECKLIST.md)
+- [Codebase Review (2026-04-10)](docs/CODEBASE_REVIEW_2026-04-10.md)
+- [RPC Permission Baseline](docs/RPC_PERMISSION_BASELINE.md)
 
 Security regression quick check:
 
 ```bash
 python -m pytest tests/test_security_regression_access.py -q
 python -m pytest tests/test_tee_closed_loop.py -q
+python -m pytest tests/test_rpc_permission_baseline.py -q
 ```
 
 Reviewer evidence reports:
@@ -696,10 +703,20 @@ Example:
 
 ```yaml
 consensus:
-    mode: mixed
-    sbox_ratio: 0.65
+    mode: sbox_only
+    sbox_ratio: 0.50
     sbox_enabled: true
 ```
+
+In `sbox_only`, each miner user receives one deterministic performance trap question every 50 blocks in their mining sector.
+The trap question is deterministic per miner + sector window, and its result is connected to dispatch scoring:
+- trap score is fused into miner `system_score`
+- unsubmitted trap in current window applies dispatch weight penalty
+- submitted trap in current window applies score-based dispatch multiplier
+
+RPC for trap lifecycle:
+- `compute_getTrapQuestion`
+- `compute_submitTrapAnswer`
 
 Evidence links:
 

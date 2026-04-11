@@ -46,7 +46,7 @@ logging:
   console: true
 
 consensus:
-  mode: mixed
+  mode: sbox_only
   sbox_ratio: 0.50
   sbox_enabled: true
   target_block_time: 30

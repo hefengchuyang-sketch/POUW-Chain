@@ -224,12 +224,11 @@ def test_compute_scheduler_in_main():
 
 def test_rpc_scheduler_endpoints():
     """RPC 服务应注册 scheduler_ 端点"""
-    import inspect
     from core.rpc_service import NodeRPCService
-    src = inspect.getsource(NodeRPCService._register_default_methods)
-    assert 'scheduler_registerMiner' in src, "缺少 scheduler_registerMiner 端点"
-    assert 'scheduler_heartbeat' in src, "缺少 scheduler_heartbeat 端点"
-    assert 'scheduler_submitResult' in src, "缺少 scheduler_submitResult 端点"
+    service = NodeRPCService()
+    assert service.registry.get("scheduler_registerMiner") is not None, "缺少 scheduler_registerMiner 端点"
+    assert service.registry.get("scheduler_heartbeat") is not None, "缺少 scheduler_heartbeat 端点"
+    assert service.registry.get("scheduler_submitResult") is not None, "缺少 scheduler_submitResult 端点"
 
 
 def test_task_create_routes_to_scheduler():

@@ -3,7 +3,9 @@ import hashlib
 import os
 
 from core.file_transfer import ChunkedFileManager
+from core.rpc.models import RPCRequest
 from core.rpc.models import RPCError
+from core.rpc.server import RPCHTTPHandler
 from core.rpc_service import NodeRPCService
 from core.sandbox_executor import SandboxExecutor
 
@@ -114,3 +116,40 @@ def test_admin_can_access_foreign_file(tmp_path):
         auth_context=_make_auth("admin_user", is_admin=True),
     )
     assert info["file_ref"] == file_ref
+
+
+def test_rpc_method_whitelist_helper_blocks_non_allowed_method():
+    assert RPCHTTPHandler.is_method_allowed(None, "chain_getInfo") is True
+    allowed = {"chain_getInfo", "tx_getStatus"}
+    assert RPCHTTPHandler.is_method_allowed(allowed, "chain_getInfo") is True
+    assert RPCHTTPHandler.is_method_allowed(allowed, "wallet_getInfo") is False
+
+
+def test_wallet_get_info_requires_authenticated_user_permission():
+    service = NodeRPCService()
+    req = RPCRequest(method="wallet_getInfo", params={}, id=1)
+
+    guest_resp = service.handle_request(req, auth_context={})
+    guest_payload = guest_resp.to_dict()
+    assert "error" in guest_payload
+    assert guest_payload["error"]["code"] == -32403
+
+    user_resp = service.handle_request(req, auth_context=_make_auth("u1"))
+    user_payload = user_resp.to_dict()
+    assert "result" in user_payload
+
+
+def test_transaction_history_endpoints_require_authenticated_user_permission():
+    service = NodeRPCService()
+
+    for method in ("account_getTransactions", "wallet_getTransactions"):
+        req = RPCRequest(method=method, params={}, id=1)
+
+        guest_resp = service.handle_request(req, auth_context={})
+        guest_payload = guest_resp.to_dict()
+        assert "error" in guest_payload
+        assert guest_payload["error"]["code"] == -32403
+
+        user_resp = service.handle_request(req, auth_context=_make_auth("u1"))
+        user_payload = user_resp.to_dict()
+        assert "result" in user_payload

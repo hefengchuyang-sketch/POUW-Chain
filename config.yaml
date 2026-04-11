@@ -117,7 +117,7 @@ logging:
 # Consensus parameters (usually no need to modify)
 consensus:
   # Consensus mode: mixed, sbox_only, pouw_only
-  mode: mixed
+  mode: sbox_only
 
   # In mixed mode, percentage of blocks to target SBOX_POUW (0.0 - 1.0)
   sbox_ratio: 0.50

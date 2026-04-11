@@ -25,9 +25,15 @@ class RPCHTTPHandler(BaseHTTPRequestHandler):
     rate_limiter = None
     api_auth = None
     cors_origins: list = None
+    allowed_methods = None
 
     def log_message(self, format, *args):
         pass
+
+    @staticmethod
+    def is_method_allowed(allowed_methods, method: str) -> bool:
+        """检查方法是否在白名单中（None 表示不启用白名单）。"""
+        return allowed_methods is None or method in allowed_methods
 
     def _get_client_ip(self) -> str:
         """获取客户端真实 IP。
@@ -228,6 +234,14 @@ class RPCHTTPHandler(BaseHTTPRequestHandler):
             auth_context = self._extract_auth_context()
             request = RPCRequest.from_dict(data)
 
+            # 可选 RPC 方法白名单：非空时仅允许列表中的方法
+            if not self.is_method_allowed(self.allowed_methods, request.method):
+                self._send_json(
+                    RPCResponse.make_error(-32004, f"Method not allowed: {request.method}").to_dict(),
+                    403,
+                )
+                return
+
             from core.security import PUBLIC_RPC_METHODS, AUTHENTICATED_WRITE_METHODS
             role = auth_context.get('role', 'guest')
             is_local = auth_context.get('is_local', False)
@@ -275,7 +289,8 @@ class RPCServer:
 
     def __init__(self, host: str = "127.0.0.1", port: int = 8545, static_dir: str = None,
                  ssl_cert: str = None, ssl_key: str = None, admin_key: str = "",
-                 cors_origins: list = None, rate_limit: int = 200):
+                 cors_origins: list = None, rate_limit: int = 200,
+                 allowed_methods: Optional[List[str]] = None):
         self.host = host
         self.port = port
         self.static_dir = static_dir
@@ -293,6 +308,7 @@ class RPCServer:
         self.api_auth = APIKeyAuth(admin_key)
         self.rate_limiter = RateLimiter(max_requests=rate_limit, window_seconds=60)
         self.cors_origins = cors_origins or []
+        self.allowed_methods = set(allowed_methods) if allowed_methods else None
 
     def start(self):
         """启动服务器"""
@@ -301,6 +317,7 @@ class RPCServer:
         RPCHTTPHandler.rate_limiter = self.rate_limiter
         RPCHTTPHandler.api_auth = self.api_auth
         RPCHTTPHandler.cors_origins = self.cors_origins
+        RPCHTTPHandler.allowed_methods = self.allowed_methods
 
         self.server = HTTPServer((self.host, self.port), RPCHTTPHandler)
 

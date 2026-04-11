@@ -40,6 +40,7 @@ logger = logging.getLogger(__name__)
 import secrets
 
 from .crypto import ECDSASigner, HAS_ECDSA as _HAS_ECDSA
+from .blind_task_engine import TrapGenerator, TrapDifficulty
 
 # 是否生产环境 — 生产环境强制要求 ResourceDeclaration 签名
 _MARKET_PRODUCTION = _os.environ.get("POUW_ENV", "").lower() in ("production", "mainnet")
@@ -283,6 +284,12 @@ class MinerNode:
     
     # 评分（系统量化 + 用户评价）
     system_score: float = 1.0           # 系统量化分 (0-2)
+    trap_score: float = 0.5             # 半小时陷阱题得分 (0-1)
+    trap_total: int = 0                 # 陷阱题总数
+    trap_passed: int = 0                # 陷阱题通过数
+    trap_failed: int = 0                # 陷阱题失败数
+    trap_last_window: int = -1          # 最近陷阱题窗口
+    trap_last_challenge_id: str = ""    # 最近陷阱题 ID
     user_rating_weighted: float = 0.0   # 加权用户评分
     user_rating_count: int = 0
     total_stake_burned: float = 0.0     # 已销毁的评价质押金
@@ -313,6 +320,12 @@ class MinerNode:
             "available_gpus": self.available_gpus,
             "current_orders": self.current_orders,
             "system_score": self.system_score,
+            "trap_score": self.trap_score,
+            "trap_total": self.trap_total,
+            "trap_passed": self.trap_passed,
+            "trap_failed": self.trap_failed,
+            "trap_last_window": self.trap_last_window,
+            "trap_last_challenge_id": self.trap_last_challenge_id,
             "user_rating_weighted": self.user_rating_weighted,
             "user_rating_count": self.user_rating_count,
             "total_stake_burned": self.total_stake_burned,
@@ -339,6 +352,12 @@ class MinerNode:
             available_gpus=data.get('available_gpus', 0),
             current_orders=data.get('current_orders', []),
             system_score=data.get('system_score', 1.0),
+            trap_score=max(0.0, min(1.0, float(data.get('trap_score', 0.5)))),
+            trap_total=int(data.get('trap_total', 0)),
+            trap_passed=int(data.get('trap_passed', 0)),
+            trap_failed=int(data.get('trap_failed', 0)),
+            trap_last_window=int(data.get('trap_last_window', -1)),
+            trap_last_challenge_id=str(data.get('trap_last_challenge_id', '')),
             user_rating_weighted=data.get('user_rating_weighted', 0.0),
             user_rating_count=data.get('user_rating_count', 0),
             total_stake_burned=data.get('total_stake_burned', 0.0),
@@ -554,6 +573,8 @@ class ComputeMarketV3:
     HEARTBEAT_TIMEOUT = 60              # 心跳超时（秒）
     ORDER_TIMEOUT = 300                 # 订单匹配超时（5分钟）
     WATCHDOG_INTERVAL = 30              # 守护巡检间隔（秒）
+    PERF_TRAP_INTERVAL_BLOCKS = 50      # 每个板块每 50 个区块一道性能陷阱题
+    PERF_TRAP_INTERVAL_SECONDS = 1800   # 仅在链高不可用时的回退窗口
     DEFAULT_TEE_MAX_EVIDENCE_AGE_SECONDS = int(_os.getenv("POUW_TEE_MAX_EVIDENCE_AGE_SECONDS", "86400"))
     
     def __init__(self, 
@@ -573,6 +594,7 @@ class ComputeMarketV3:
         self._dispatch_challenge_source = str(
             _os.getenv("POUW_DISPATCH_CHALLENGE_SOURCE", "chain")
         ).strip().lower()
+        self._performance_traps: Dict[str, Dict[str, Any]] = {}
         self._init_db()
         
         # 守护线程 — 巡检超时订单和离线矿工
@@ -920,6 +942,7 @@ class ComputeMarketV3:
         miner.available_gpus = miner.declaration.allocatable_gpus if miner.declaration else 0
         
         self._update_miner(miner)
+        self._ensure_performance_trap(miner_id)
         return True, "已上线"
     
     def miner_offline(self, miner_id: str) -> Tuple[bool, str]:
@@ -944,6 +967,7 @@ class ComputeMarketV3:
         
         miner.last_heartbeat = time.time()
         self._update_miner(miner)
+        self._ensure_performance_trap(miner_id)
         
         # 检查是否有已分配的订单
         if miner.current_orders:
@@ -983,6 +1007,170 @@ class ComputeMarketV3:
                 miner.last_heartbeat,
                 miner.miner_id
             ))
+
+    def _get_sector_chain_height(self, sector: str) -> Optional[int]:
+        """读取指定板块链当前高度。"""
+        sec = str(sector or "").strip()
+        if not sec:
+            return None
+        try:
+            chain_db = self.db_path.parent / f"chain_{sec.lower()}.db"
+            if not chain_db.exists():
+                return None
+            conn = sqlite3.connect(str(chain_db))
+            try:
+                row = conn.execute(
+                    "SELECT MAX(height) AS h FROM blocks WHERE sector = ?",
+                    (sec,)
+                ).fetchone()
+                if row and row[0] is not None:
+                    return int(row[0])
+            finally:
+                conn.close()
+        except Exception:
+            return None
+        return None
+
+    def _current_perf_trap_window(self, miner: MinerNode) -> Tuple[int, Dict[str, Any]]:
+        """计算矿工当前陷阱题窗口（优先按所在板块链高）。"""
+        sector_height = self._get_sector_chain_height(miner.sector)
+        if sector_height is not None and sector_height >= 0:
+            win = int(sector_height // self.PERF_TRAP_INTERVAL_BLOCKS)
+            meta = {
+                "source": "sector_block_height",
+                "sector": miner.sector,
+                "height": int(sector_height),
+                "window_start_height": int(win * self.PERF_TRAP_INTERVAL_BLOCKS),
+                "window_end_height": int((win + 1) * self.PERF_TRAP_INTERVAL_BLOCKS - 1),
+            }
+            return win, meta
+
+        # 回退：链高不可用时使用时间窗口，避免接口不可用。
+        now_ts = int(time.time())
+        win = int(now_ts // self.PERF_TRAP_INTERVAL_SECONDS)
+        meta = {
+            "source": "time_fallback",
+            "window_start": int(win * self.PERF_TRAP_INTERVAL_SECONDS),
+            "window_end": int((win + 1) * self.PERF_TRAP_INTERVAL_SECONDS),
+        }
+        return win, meta
+
+    def _compute_trap_score(self, miner: MinerNode) -> float:
+        """根据历史通过率计算 [0,1] 陷阱题得分（含平滑先验）。"""
+        total = max(0, int(miner.trap_total))
+        passed = max(0, int(miner.trap_passed))
+        return max(0.0, min(1.0, (passed + 1.0) / (total + 2.0)))
+
+    def _ensure_performance_trap(self, miner_id: str) -> Optional[Dict[str, Any]]:
+        """确保矿工在当前 30 分钟窗口有一道可提交的性能陷阱题。"""
+        miner = self.get_miner(miner_id)
+        if not miner:
+            return None
+
+        window_id, window_meta = self._current_perf_trap_window(miner)
+        existing = self._performance_traps.get(miner_id)
+        if existing and int(existing.get("window_id", -1)) == window_id:
+            return existing
+
+        seed = hashlib.sha256(f"perf_trap:{miner_id}:{window_id}".encode()).hexdigest()
+        trap_seed = int(seed[:8], 16)
+        difficulty_cycle = [TrapDifficulty.EASY, TrapDifficulty.MEDIUM, TrapDifficulty.HARD]
+        difficulty = difficulty_cycle[window_id % len(difficulty_cycle)]
+        trap_data, expected_answer_hash = TrapGenerator.generate(
+            difficulty=difficulty,
+            seed=trap_seed,
+        )
+        challenge = {
+            "challenge_id": f"trap_{seed[:16]}",
+            "miner_id": miner_id,
+            "window_id": window_id,
+            "window_meta": window_meta,
+            "trap_data": trap_data,
+            "difficulty": difficulty.value,
+            "instruction": "execute_trap_task_and_submit_answer_hash",
+            "expected_answer_hash": expected_answer_hash,
+            "submitted": False,
+            "passed": False,
+            "submitted_at": 0.0,
+        }
+        self._performance_traps[miner_id] = challenge
+
+        miner.trap_last_window = window_id
+        miner.trap_last_challenge_id = challenge["challenge_id"]
+        self._update_miner(miner)
+        return challenge
+
+    def get_performance_trap(self, miner_id: str) -> Tuple[bool, Dict[str, Any]]:
+        """获取矿工当前性能陷阱题（每 30 分钟轮换一次）。"""
+        challenge = self._ensure_performance_trap(miner_id)
+        if not challenge:
+            return False, {"error": "miner_not_found"}
+        return True, {
+            "challenge_id": challenge["challenge_id"],
+            "window_id": challenge["window_id"],
+            "window_meta": challenge.get("window_meta", {}),
+            "trap_data": challenge["trap_data"],
+            "difficulty": challenge["difficulty"],
+            "instruction": challenge["instruction"],
+            "submitted": bool(challenge.get("submitted", False)),
+        }
+
+    def submit_performance_trap(self,
+                                miner_id: str,
+                                challenge_id: str,
+                                answer_hash: str) -> Tuple[bool, Dict[str, Any]]:
+        """提交性能陷阱题答案，并回写到评分体系。"""
+        miner = self.get_miner(miner_id)
+        if not miner:
+            return False, {"error": "miner_not_found"}
+
+        challenge = self._ensure_performance_trap(miner_id)
+        if not challenge:
+            return False, {"error": "trap_not_found"}
+        if challenge_id != challenge.get("challenge_id"):
+            return False, {"error": "challenge_id_mismatch"}
+        if challenge.get("submitted"):
+            return False, {"error": "challenge_already_submitted"}
+
+        normalized_answer = str(answer_hash or "").strip().lower()
+        expected = str(challenge.get("expected_answer_hash", "")).strip().lower()
+        passed = bool(normalized_answer) and normalized_answer == expected
+
+        miner.trap_total += 1
+        if passed:
+            miner.trap_passed += 1
+        else:
+            miner.trap_failed += 1
+
+        miner.trap_score = self._compute_trap_score(miner)
+
+        # 陷阱题分并入系统分，直接影响后续派单。
+        system_norm = max(0.0, min(1.0, float(miner.system_score) / 2.0))
+        fused_norm = 0.7 * system_norm + 0.3 * miner.trap_score
+        miner.system_score = max(0.0, min(2.0, fused_norm * 2.0))
+        self._update_miner(miner)
+
+        challenge["submitted"] = True
+        challenge["passed"] = passed
+        challenge["submitted_at"] = time.time()
+
+        return True, {
+            "passed": passed,
+            "trap_score": round(miner.trap_score, 6),
+            "system_score": round(miner.system_score, 6),
+            "trap_total": miner.trap_total,
+            "trap_passed": miner.trap_passed,
+            "trap_failed": miner.trap_failed,
+        }
+
+    def _get_trap_dispatch_multiplier(self, miner: MinerNode) -> float:
+        """将陷阱题完成情况映射为派单倍率。"""
+        challenge = self._ensure_performance_trap(miner.miner_id)
+        if not challenge:
+            return 0.90
+        if not challenge.get("submitted", False):
+            return 0.85
+        return 0.90 + 0.20 * max(0.0, min(1.0, float(miner.trap_score)))
     
     # ============== 订单管理 ==============
     
@@ -1209,8 +1397,9 @@ class ComputeMarketV3:
 
         failure_ratio = (miner.tasks_failed / total_tasks) if total_tasks > 0 else 0.0
         penalty = min(0.35, failure_ratio * 0.25)
+        trap_multiplier = self._get_trap_dispatch_multiplier(miner)
 
-        return max(0.001, base * challenge_multiplier - penalty)
+        return max(0.001, base * challenge_multiplier * trap_multiplier - penalty)
 
     def _compute_ux_stake_factor(self, total_stake_burned: float) -> float:
         """将历史评价质押销毁金额映射为 [0,1] 的可信度因子。"""

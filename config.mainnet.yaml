@@ -34,16 +34,15 @@ network:
     port: 8545
     # Allowed methods (must be explicitly listed in production)
     allowed_methods:
-      - "chain_getStatus"
-      - "chain_getBlock"
-      - "chain_getTransaction"
-      - "chain_getBalance"
-      - "chain_getBlockHeight"
-      - "chain_getPendingTxCount"
-      - "wallet_getBalance"
-      - "wallet_getAddresses"
-      - "tx_send"
+      - "chain_getInfo"
+      - "chain_getHeight"
+      - "blockchain_getBlock"
+      - "blockchain_getLatestBlocks"
       - "tx_getStatus"
+      - "account_getBalance"
+      - "wallet_getBalance"
+      - "wallet_getInfo"
+      - "tx_send"
     # CORS configuration - restrict to your frontend domain
     cors_origins:
       - "https://your-frontend-domain.com"
@@ -94,7 +93,7 @@ logging:
 # Consensus parameters
 consensus:
   # Consensus mode: mixed, sbox_only, pouw_only
-  mode: mixed
+  mode: sbox_only
 
   # In mixed mode, percentage of blocks to target SBOX_POUW (0.0 - 1.0)
   sbox_ratio: 0.65
