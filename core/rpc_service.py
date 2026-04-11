@@ -909,6 +909,11 @@ class NodeRPCService:
             result["sboxMiningEnabled"] = getattr(self.consensus_engine, '_sbox_mining_enabled', False)
             result["consensusMode"] = getattr(self.consensus_engine, 'consensus_mode', 'mixed')
             result["consensusSboxRatio"] = getattr(self.consensus_engine, 'consensus_sbox_ratio', 0.5)
+            result["consensusPouwSupportRatio"] = getattr(
+                self.consensus_engine,
+                'consensus_pouw_support_ratio',
+                0.1,
+            )
 
             # 混用共识观测统计（若共识引擎可提供）
             try:

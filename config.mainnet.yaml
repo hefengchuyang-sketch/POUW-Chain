@@ -92,11 +92,14 @@ logging:
 
 # Consensus parameters
 consensus:
-  # Consensus mode: mixed, sbox_only, pouw_only
-  mode: sbox_only
+  # Consensus mode: sbox_primary, mixed, sbox_only, pouw_only
+  mode: sbox_primary
 
   # In mixed mode, percentage of blocks to target SBOX_POUW (0.0 - 1.0)
   sbox_ratio: 0.65
+
+  # In sbox_primary mode, percentage of blocks to inject classic POUW as support (0.0 - 1.0)
+  pouw_support_ratio: 0.08
 
   # Globally enable/disable S-Box mining path
   sbox_enabled: true

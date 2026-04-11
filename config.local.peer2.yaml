@@ -46,8 +46,9 @@ logging:
   console: true
 
 consensus:
-  mode: sbox_only
+  mode: sbox_primary
   sbox_ratio: 0.50
+  pouw_support_ratio: 0.10
   sbox_enabled: true
   target_block_time: 30
   difficulty_adjustment_interval: 10

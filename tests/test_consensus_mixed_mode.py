@@ -48,6 +48,41 @@ def test_sbox_only_falls_back_to_pouw_when_sbox_unavailable():
     assert engine.select_consensus() == ConsensusType.POUW
 
 
+def test_sbox_primary_prefers_sbox_when_support_ratio_is_zero():
+    engine = _make_engine()
+    engine.configure_consensus_mode(
+        mode="sbox_primary",
+        sbox_ratio=0.5,
+        pouw_support_ratio=0.0,
+        sbox_enabled=True,
+    )
+
+    engine.has_pouw_tasks = lambda: True
+    engine._get_sbox_miner = lambda: object()
+
+    assert engine.select_consensus() == ConsensusType.SBOX_POUW
+
+
+def test_sbox_primary_can_force_pouw_support_when_ratio_is_one():
+    engine = _make_engine()
+    engine.configure_consensus_mode(
+        mode="sbox_primary",
+        sbox_ratio=0.5,
+        pouw_support_ratio=1.0,
+        sbox_enabled=True,
+    )
+
+    engine.has_pouw_tasks = lambda: True
+    engine._get_sbox_miner = lambda: object()
+
+    class _Latest:
+        hash = "h" * 64
+
+    engine.get_latest_block = lambda: _Latest()
+
+    assert engine.select_consensus() == ConsensusType.POUW
+
+
 def test_pouw_only_uses_pouw_even_if_sbox_available():
     engine = _make_engine()
     engine.configure_consensus_mode(mode="pouw_only", sbox_ratio=0.5, sbox_enabled=True)

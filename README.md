@@ -193,9 +193,10 @@ In short, this is an attempt to make compute economically useful and socially me
 
 ### Hybrid Consensus Mode (POUW + S-Box PoUW)
 - Built-in mixed mode supports both POUW and SBOX_POUW in the same network
-- `consensus.mode` controls strategy: `mixed`, `sbox_only`, `pouw_only`
+- `consensus.mode` controls strategy: `sbox_primary`, `mixed`, `sbox_only`, `pouw_only`
 - `consensus.sbox_ratio` controls SBOX_POUW target share in mixed mode (0.0 - 1.0)
-- Default deployment profile now uses `sbox_only` (single S-Box primary path)
+- `consensus.pouw_support_ratio` controls classic POUW injection share in `sbox_primary` mode (0.0 - 1.0)
+- Default deployment profile now uses `sbox_primary` (S-Box primary path + low-ratio POUW support)
 - In `sbox_only`, each miner receives a deterministic random S-Box scoring quiz every 30 minutes:
     - quiz changes score weights + score threshold + hash difficulty in the current window
     - quiz id and window range are recorded in block `extra_data` for auditability
@@ -693,8 +694,9 @@ Evidence links:
 
 ### 6. Hybrid Consensus Policy
 
-`consensus.mode` and `consensus.sbox_ratio` let operators tune production behavior:
+`consensus.mode`, `consensus.sbox_ratio`, and `consensus.pouw_support_ratio` let operators tune production behavior:
 
+- `sbox_primary`: prioritize SBOX_POUW and inject low-ratio POUW as market-stability support
 - `mixed`: deterministic ratio-based mix of POUW and SBOX_POUW
 - `sbox_only`: prioritize SBOX_POUW, fallback to POUW when unavailable
 - `pouw_only`: run classic POUW path only
@@ -703,8 +705,9 @@ Example:
 
 ```yaml
 consensus:
-    mode: sbox_only
+    mode: sbox_primary
     sbox_ratio: 0.50
+    pouw_support_ratio: 0.10
     sbox_enabled: true
 ```
 
@@ -772,8 +775,9 @@ Default port: `8545`
 
 `chain_getInfo` now includes mixed-consensus observability fields:
 
-- `consensusMode`: `mixed` / `sbox_only` / `pouw_only`
+- `consensusMode`: `sbox_primary` / `mixed` / `sbox_only` / `pouw_only`
 - `consensusSboxRatio`: configured SBOX_POUW target ratio
+- `consensusPouwSupportRatio`: configured POUW support ratio for `sbox_primary`
 - `consensusSelectedDistribution`: rolling window stats for selected consensus type
 - `consensusMinedDistribution`: rolling window stats for successfully mined consensus type
 

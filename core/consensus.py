@@ -618,8 +618,9 @@ class ConsensusEngine:
         # S-Box PoUW 挖矿引擎
         self._sbox_miner = None  # 延迟初始化（需要知道活跃板块列表）
         self._sbox_mining_enabled = True  # 默认启用 S-Box 挖矿
-        self.consensus_mode = "sbox_only"  # mixed | sbox_only | pouw_only
+        self.consensus_mode = "sbox_primary"  # sbox_primary | mixed | sbox_only | pouw_only
         self.consensus_sbox_ratio = 0.5  # mixed 模式下 SBOX_POUW 占比
+        self.consensus_pouw_support_ratio = 0.1  # sbox_primary 模式下 POUW 辅助占比
         self._consensus_round = 0
         self._recent_consensus_selected = deque(maxlen=200)
         self._recent_consensus_mined = deque(maxlen=200)
@@ -1068,13 +1069,14 @@ class ConsensusEngine:
     def select_consensus(self) -> ConsensusType:
         """选择共识类型。
         
-        支持三种策略：
+        支持四种策略：
+        - sbox_primary: S-Box 主路径，按辅助比例注入少量 POUW
         - sbox_only: 优先并固定使用 SBOX_POUW（不可用则回退 POUW）
         - pouw_only: 固定使用 POUW（异常时回退 PoW）
         - mixed: 按配置比例在 SBOX_POUW/POUW 之间混用
         """
         mode = (self.consensus_mode or "mixed").lower()
-        if mode not in {"mixed", "sbox_only", "pouw_only"}:
+        if mode not in {"sbox_primary", "mixed", "sbox_only", "pouw_only"}:
             mode = "mixed"
 
         # 保证 POUW 路径有任务可执行
@@ -1106,6 +1108,34 @@ class ConsensusEngine:
                 selected = ConsensusType.POUW
                 self._record_selected_consensus(selected)
                 return selected
+            self.log("⚠️ S-Box/POUW 均不可用，回退 PoW")
+            selected = ConsensusType.POW
+            self._record_selected_consensus(selected)
+            return selected
+
+        if mode == "sbox_primary":
+            if sbox_available and has_pouw:
+                latest = self.get_latest_block()
+                seed = f"{latest.hash if latest else 'genesis'}:{self.node_id}:{self._consensus_round}".encode()
+                roll = int(hashlib.sha256(seed).hexdigest()[:8], 16) / 0xFFFFFFFF
+                self._consensus_round += 1
+                if roll < self.consensus_pouw_support_ratio:
+                    selected = ConsensusType.POUW
+                    self._record_selected_consensus(selected)
+                    return selected
+                selected = ConsensusType.SBOX_POUW
+                self._record_selected_consensus(selected)
+                return selected
+
+            if sbox_available:
+                selected = ConsensusType.SBOX_POUW
+                self._record_selected_consensus(selected)
+                return selected
+            if has_pouw:
+                selected = ConsensusType.POUW
+                self._record_selected_consensus(selected)
+                return selected
+
             self.log("⚠️ S-Box/POUW 均不可用，回退 PoW")
             selected = ConsensusType.POW
             self._record_selected_consensus(selected)
@@ -1184,14 +1214,16 @@ class ConsensusEngine:
         self,
         mode: str = "mixed",
         sbox_ratio: float = 0.5,
+        pouw_support_ratio: float = 0.1,
         sbox_enabled: Optional[bool] = None,
     ):
         """配置共识模式。"""
         mode = (mode or "mixed").lower().strip()
-        if mode not in {"mixed", "sbox_only", "pouw_only"}:
+        if mode not in {"sbox_primary", "mixed", "sbox_only", "pouw_only"}:
             mode = "mixed"
 
         ratio = max(0.0, min(1.0, float(sbox_ratio)))
+        support_ratio = max(0.0, min(1.0, float(pouw_support_ratio)))
 
         # 治理保护：限制单次 ratio 变化幅度，防止参数瞬时漂移。
         max_ratio_step = float(self._mechanism_strategy.get("max_ratio_step", 1.0))
@@ -1202,12 +1234,14 @@ class ConsensusEngine:
 
         self.consensus_mode = mode
         self.consensus_sbox_ratio = ratio
+        self.consensus_pouw_support_ratio = support_ratio
         if sbox_enabled is not None:
             self._sbox_mining_enabled = bool(sbox_enabled)
 
         self.log(
             f"⚙️ 共识模式已配置: mode={self.consensus_mode}, "
             f"sbox_ratio={self.consensus_sbox_ratio:.2f}, "
+            f"pouw_support_ratio={self.consensus_pouw_support_ratio:.2f}, "
             f"sbox_enabled={self._sbox_mining_enabled}"
         )
 
@@ -1242,11 +1276,17 @@ class ConsensusEngine:
 
         mode = kwargs.get("mode")
         ratio = kwargs.get("sbox_ratio")
+        support_ratio = kwargs.get("pouw_support_ratio")
         sbox_enabled = kwargs.get("sbox_enabled")
-        if mode is not None or ratio is not None or sbox_enabled is not None:
+        if mode is not None or ratio is not None or support_ratio is not None or sbox_enabled is not None:
             self.configure_consensus_mode(
                 mode=mode if mode is not None else self.consensus_mode,
                 sbox_ratio=float(ratio) if ratio is not None else self.consensus_sbox_ratio,
+                pouw_support_ratio=(
+                    float(support_ratio)
+                    if support_ratio is not None
+                    else self.consensus_pouw_support_ratio
+                ),
                 sbox_enabled=sbox_enabled,
             )
 
@@ -2391,7 +2431,8 @@ class ConsensusEngine:
         sbox_status = "✅ S-Box PoUW 已启用" if self._sbox_mining_enabled else "❌ S-Box PoUW 未启用"
         self.log(
             f"⛏️ 挖矿线程已启动 (区块类型: task/idle/validation, mode={self.consensus_mode}, "
-            f"sbox_ratio={self.consensus_sbox_ratio:.2f}) | {sbox_status}"
+            f"sbox_ratio={self.consensus_sbox_ratio:.2f}, "
+            f"pouw_support_ratio={self.consensus_pouw_support_ratio:.2f}) | {sbox_status}"
         )
     
     def stop(self):
@@ -2407,6 +2448,7 @@ class ConsensusEngine:
             "consensus": self.current_consensus.value,
             "consensus_mode": self.consensus_mode,
             "consensus_sbox_ratio": self.consensus_sbox_ratio,
+            "consensus_pouw_support_ratio": self.consensus_pouw_support_ratio,
             "pending_txs": len(self.pending_transactions),
             "pending_pouw": len(self.pending_pouw),
             "total_blocks_mined": self.total_blocks_mined,

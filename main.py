@@ -388,12 +388,14 @@ class POUWNode:
             log.info(f"财库税率已配置: {rate*100:.1f}%")
 
         # 配置混用共识模式
-        consensus_mode = consensus_cfg.get("mode", "sbox_only")
+        consensus_mode = consensus_cfg.get("mode", "sbox_primary")
         sbox_ratio = float(consensus_cfg.get("sbox_ratio", 0.5))
+        pouw_support_ratio = float(consensus_cfg.get("pouw_support_ratio", 0.1))
         sbox_enabled = consensus_cfg.get("sbox_enabled", True)
         self.consensus_engine.configure_consensus_mode(
             mode=consensus_mode,
             sbox_ratio=sbox_ratio,
+            pouw_support_ratio=pouw_support_ratio,
             sbox_enabled=sbox_enabled,
         )
         
@@ -402,7 +404,8 @@ class POUWNode:
         
         log.info(
             f"共识引擎初始化: {node_id} (网络={network_type}, mode={self.consensus_engine.consensus_mode}, "
-            f"sbox_ratio={self.consensus_engine.consensus_sbox_ratio:.2f})"
+            f"sbox_ratio={self.consensus_engine.consensus_sbox_ratio:.2f}, "
+            f"pouw_support_ratio={self.consensus_engine.consensus_pouw_support_ratio:.2f})"
         )
     
     def _init_sector_ledger(self):
