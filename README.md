@@ -13,11 +13,15 @@ An innovative decentralized blockchain platform that transforms real computation
 ## Table of Contents
 
 - [Project Thesis](#project-thesis)
+- [System Design Philosophy Map](#system-design-philosophy-map)
 - [Privacy-First Compute Bank Thesis](#privacy-first-compute-bank-thesis)
 - [Founder Context](#founder-context)
 - [Current Stage & Validation Needs](#current-stage--validation-needs)
 - [Implementation Status & Known Gaps](#implementation-status--known-gaps)
 - [Business Model](#business-model)
+- [Governance & Tokenomics Overview](#governance--tokenomics-overview)
+- [Production Intelligence Layer](#production-intelligence-layer)
+- [Commercial Execution Layer](#commercial-execution-layer)
 - [Why This Matters for Human Progress](#why-this-matters-for-human-progress)
 - [Key Features](#key-features)
 - [Implemented Compensation & Protection Mechanisms](#implemented-compensation--protection-mechanisms)
@@ -47,6 +51,48 @@ Core claims:
 - Useful work should secure the chain, not waste energy on meaningless hashes.
 - Compute markets need verification and dispute resolution, not only matching and pricing.
 - Economic incentives must be transparent and governable from day one.
+
+---
+
+## System Design Philosophy Map
+
+POUW-Chain is built around one principle: **turn fragmented compute into trustable, accountable infrastructure**.
+
+At a system level, the design couples five layers instead of optimizing any single layer in isolation:
+
+1. **Useful-work consensus layer**
+    Real workloads (not empty hashes) participate in security and rewards.
+2. **Verification and dispute layer**
+    Multi-witness checks, arbitration, and compensation routes make delivery quality auditable.
+3. **Privacy and safety layer**
+    Encrypted transport, S-Box-enhanced paths, and TEE-oriented controls protect data and execution.
+4. **Governance and treasury layer**
+    Strategy updates, sector evolution, and treasury routing are governable and rollback-aware.
+5. **Commercial execution layer**
+    Pricing, billing, and service modules convert protocol capability into sustainable operations.
+
+ASCII system map:
+
+```text
+Fragmented Compute Supply + Real Demand
+                     |
+                     v
+        Useful-Work Consensus (POUW/S-Box)
+                     |
+                     v
+ Verification + Dispute + Compensation
+                     |
+                     v
+    Privacy/Security Controls (E2E/S-Box/TEE)
+                     |
+                     v
+ Governance + Treasury + Economic Routing
+                     |
+                     v
+  Sustainable Service Layer (Pricing/Billing/Membership)
+```
+
+Why this matters: the protocol is not only a chain mechanism; it is a full trust-cost reduction stack for real compute transactions.
 
 ---
 
@@ -152,6 +198,111 @@ POUW-Chain is designed as a verifiable compute marketplace with layered monetiza
 - Governance + treasury flywheel that improves pricing and scheduling policies over time
 
 Long-term value comes from reducing trust costs in distributed compute transactions.
+
+---
+
+## Governance & Tokenomics Overview
+
+This section consolidates protocol governance and economics into one reviewer-facing view.
+
+### 1) Governance Structure (Protocol-Level)
+
+- **Parameter governance**: consensus strategy and rollout controls are updatable with versioned, rollbackable policy (`chain_updateMechanismStrategy`).
+- **Sector governance**: hardware sectors can be added/removed through DAO process, so network capacity composition is community-steered.
+- **Treasury governance**: treasury routing and spending are managed through governance modules (`core/dao_treasury.py`, `core/governance_enhanced.py`, `core/treasury_manager.py`).
+
+### 2) Economic Model (Dual Token + Fee/Reward Routing)
+
+- **Dual-token model**:
+    - `MAIN`: base network value token (not directly mined).
+    - `Sector Coins`: mined by useful work within each hardware sector.
+- **Fee routing**: protocol fees are split into burn + miner incentive + foundation share.
+- **Block reward routing**: currently 97% to block producer and 3% to DAO treasury (`MAIN_TREASURY`).
+- **Exchange path**: sector coin value is routed toward MAIN through burn/mint exchange flow.
+
+### 3) Quality Convergence Path (Low-Quality -> High-Quality)
+
+The design intent is to make low-quality capacity economically less attractive over time:
+
+- **Performance-weighted earning**: completion, latency, stability, and participation are explicit scoring dimensions in POUW.
+- **Sector-isolated issuance**: each sector has independent cap/halving behavior, so weak sectors cannot infinitely dilute strong-sector contribution.
+- **Mechanism steering**: `sbox_primary` + configurable `pouw_support_ratio` keeps high-verifiability path as default while retaining liveness support.
+- **Audit/dispute pressure**: failed delivery and disputes increase economic cost for unstable providers.
+
+Expected long-run tendency (not a guaranteed promise): sectors with persistently low quality should face weaker effective earnings and reduced strategic weight, while high-quality sectors retain stronger utility and payout sustainability.
+
+### 4) Upload Failure Compensation (Implemented)
+
+- If upload remains in `CREATED` beyond timeout, watchdog auto-cancels and refunds user locked budget.
+- If miner already received data, miner gets treasury-funded bandwidth compensation.
+- Current constants include:
+    - `UPLOAD_TIMEOUT_SECONDS = 2 * 3600`
+    - `UPLOAD_COMPENSATION_PER_GB = 0.5`
+    - minimum compensation floor `0.01 MAIN`
+- If treasury balance is temporarily insufficient, deferred debt is recorded and auto-replayed after refill.
+
+### 5) Big/Small Treasury Model (Current Mapping)
+
+For operational clarity, treasury logic can be understood as two layers:
+
+- **Big Treasury (Strategic Pool)**:
+    - DAO-level treasury (e.g., block reward treasury inflow), used for governance-approved long-cycle spending.
+- **Small Treasury (Operational Buffer)**:
+    - protocol fee/compensation-side pool used for near-term operational payouts (e.g., upload-timeout compensation, penalty/distribution-side buffering).
+
+This two-layer interpretation helps separate strategic capital allocation from short-cycle reliability guarantees.
+
+---
+
+## Production Intelligence Layer
+
+Beyond consensus and token flow, POUW-Chain includes a production-oriented control layer that improves routing quality, operational resilience, and reviewability.
+
+### 1) Identity, Trust, and Reputation
+
+- **Identity binding**: on-chain/account-level identity flow is supported by DID-oriented modules (`core/did_identity.py`) and account primitives.
+- **Reputation loop**: miner/provider quality can be tracked through behavior and reputation modules (`core/miner_behavior.py`, `core/reputation_engine.py`, `core/miner_registry.py`).
+- **Design intent**: execution rights and economic outcomes increasingly align with long-run reliability, not short-run opportunistic participation.
+
+### 2) Multi-Region and Cluster Scheduling
+
+- **Cross-region scheduling path** (`core/cross_region_scheduler.py`) supports geographically distributed execution routing.
+- **Cluster-level orchestration path** (`core/cluster_manager.py`) supports group-level resource coordination.
+- **Market + scheduler coupling** (`core/compute_scheduler.py`, `core/compute_market_v3.py`, `core/compute_market_orderbook.py`) enables dispatch decisions that are not only price-driven, but quality/availability-aware.
+
+### 3) Reliability and Recoverability
+
+- **Crash journaling** (`core/crash_journal.py`) provides failure replay and post-mortem traceability hooks.
+- **Runtime observability** (`core/monitor.py`, `core/mainnet_monitor.py`, `core/load_testing.py`) supports stability checks under sustained and adversarial conditions.
+- **Data continuity controls** (`core/data_lifecycle.py`, `core/data_redundancy.py`) reduce operational loss risk during long-lived task flows.
+
+### 4) Compliance and Audit Readiness
+
+- **Audit/compliance modules** (`core/audit_compliance.py`, `core/smart_contract_audit.py`) and RPC audit paths make governance and dispute outcomes inspectable.
+- **TEE verification integration path** (`core/tee_computing.py`, `core/tee_verifier_client.py`) extends software-layer security toward stronger trust boundaries.
+
+---
+
+## Commercial Execution Layer
+
+Commercialization is not only treasury/fee theory; it is also implemented through operational product modules.
+
+### 1) Pricing, Billing, and Financial Products
+
+- **Dynamic pricing** (`core/dynamic_pricing.py`) and **granular billing** (`core/granular_billing.py`) support differentiated monetization under heterogeneous workloads.
+- **Orderbook and futures pathways** (`core/compute_market_orderbook.py`, `core/compute_futures.py`) support forward-looking capacity commitments and price discovery.
+- **Exchange-rate and precision controls** (`core/exchange_rate.py`, `core/precision.py`) reduce settlement drift in mixed-asset accounting paths.
+
+### 2) Enterprise-Grade Service Surface
+
+- **SDK/API entry layer** (`core/sdk_api.py`, `core/rpc_service.py`, `core/rpc_handlers/`) supports external integration for member/enterprise users.
+- **Secure compute service modules** (`core/secure_compute_market.py`, `core/secure_model_runtime.py`) provide a path to premium verification and higher-assurance execution modes.
+
+### 3) Membership + Treasury Synergy
+
+- **Treasury path** funds long-cycle protocol evolution (governance-approved strategic allocation).
+- **Membership/service path** (priority scheduling, higher assurance, enterprise support) is designed to generate recurring operating cash flow.
+- **Combined effect**: treasury supports expansion and hardening; recurring service revenue supports day-to-day reliability and customer retention.
 
 ---
 
