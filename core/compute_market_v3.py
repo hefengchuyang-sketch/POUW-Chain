@@ -609,6 +609,7 @@ class ComputeMarketV3:
     FORCED_RATIO_MIN = 0.05             # 动态强制比例最小值
     FORCED_RATIO_MAX = 0.95             # 动态强制比例最大值
     ANTI_MONOPOLY_BASE = 1.0            # 反垄断平滑参数
+    MIN_EXECUTION_COMBINED_SCORE = 0.55 # 执行接单硬门槛
     DEFAULT_TEE_MAX_EVIDENCE_AGE_SECONDS = int(_os.getenv("POUW_TEE_MAX_EVIDENCE_AGE_SECONDS", "86400"))
     
     def __init__(self, 
@@ -1422,7 +1423,12 @@ class ComputeMarketV3:
         ).hexdigest()
         return int(challenge[:8], 16) / 0xFFFFFFFF
 
-    def _compute_dispatch_weight(self, miner: MinerNode, challenge_score: float, order: ComputeOrder) -> float:
+    def _compute_dispatch_weight(
+        self,
+        miner: MinerNode,
+        challenge_score: float,
+        order: Optional[ComputeOrder] = None,
+    ) -> float:
         """计算派单权重（质量+可靠性+时效）并施加风险惩罚。"""
         system_quality = max(0.0, min(1.0, float(miner.system_score) / 2.0))
         ux_rating = (
@@ -1445,11 +1451,15 @@ class ComputeMarketV3:
         timeliness = max(0.0, min(1.0, 1.0 - age / float(self.HEARTBEAT_TIMEOUT)))
 
         # 价格竞争力：价格越接近用户上限以下，分数越高。
-        price_floor = float(miner.declaration.price_floor) if miner.declaration else float(order.max_price)
-        if order.max_price > 0:
-            price_competitiveness = max(0.0, min(1.0, 1.0 - price_floor / order.max_price))
+        if order is not None:
+            price_floor = float(miner.declaration.price_floor) if miner.declaration else float(order.max_price)
+            if order.max_price > 0:
+                price_competitiveness = max(0.0, min(1.0, 1.0 - price_floor / order.max_price))
+            else:
+                price_competitiveness = 0.0
         else:
-            price_competitiveness = 0.0
+            # 向后兼容：旧调用未提供订单上下文时，保持中性价格竞争分。
+            price_competitiveness = 0.5
 
         # 基础分：信誉 + 价格 + 时效
         base = 0.50 * quality + 0.30 * price_competitiveness + 0.20 * timeliness
@@ -1461,9 +1471,8 @@ class ComputeMarketV3:
         penalty = min(0.35, failure_ratio * 0.25)
         trap_multiplier = self._get_trap_dispatch_multiplier(miner)
 
-        # 反垄断：近期任务越多，有效分越被抑制。
-        anti_monopoly = math.log1p(self.ANTI_MONOPOLY_BASE + len(miner.current_orders) + max(0, miner.tasks_completed))
-        anti_monopoly = max(1.0, anti_monopoly)
+        # 反垄断：仅抑制“当前并发占用”，避免惩罚长期可靠矿工历史贡献。
+        anti_monopoly = 1.0 + 0.25 * max(0, len(miner.current_orders))
 
         return max(0.001, (base * challenge_multiplier * trap_multiplier - penalty) / anti_monopoly)
 
@@ -1533,6 +1542,10 @@ class ComputeMarketV3:
                 
                 # 检查心跳
                 if time.time() - miner.last_heartbeat > self.HEARTBEAT_TIMEOUT:
+                    continue
+
+                # 执行接单硬门槛：低于阈值的矿工不进入候选池。
+                if miner.combined_score < self.MIN_EXECUTION_COMBINED_SCORE:
                     continue
                 
                 # 检查执行模式支持
