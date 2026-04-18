@@ -120,6 +120,13 @@ class TaskExecutionMode(Enum):
     ZK = "zk"                           # 零知识证明
 
 
+class TaskTopology(Enum):
+    """任务拓扑类型（用于多 GPU 调度约束）。"""
+    SINGLE = "single"                   # 单机任务：必须同节点
+    DISTRIBUTED = "distributed"         # 弱分布任务：可跨节点切分
+    SYNC = "sync"                       # 强同步任务：需支持同步执行能力
+
+
 class MinerStatus(Enum):
     """矿工状态"""
     OFFLINE = "offline"
@@ -161,6 +168,8 @@ class ResourceDeclaration:
     # 支持的执行模式
     supports_tee: bool = False
     supports_zk: bool = False
+    supports_distributed: bool = True
+    supports_sync: bool = False
     
     # 签名（矿工签署的资源切换合约）
     declaration_hash: str = ""
@@ -187,6 +196,8 @@ class ResourceDeclaration:
             "price_floor": self.price_floor,
             "supports_tee": self.supports_tee,
             "supports_zk": self.supports_zk,
+            "supports_distributed": self.supports_distributed,
+            "supports_sync": self.supports_sync,
         }, sort_keys=True, separators=(',', ':'))
         return hashlib.sha256(canonical.encode()).hexdigest()
 
@@ -242,6 +253,8 @@ class ResourceDeclaration:
             "price_floor": self.price_floor,
             "supports_tee": self.supports_tee,
             "supports_zk": self.supports_zk,
+            "supports_distributed": self.supports_distributed,
+            "supports_sync": self.supports_sync,
             "declaration_hash": self.declaration_hash,
             "signature": self.signature,
             "declared_at": self.declared_at,
@@ -259,6 +272,8 @@ class ResourceDeclaration:
             price_floor=data['price_floor'],
             supports_tee=data.get('supports_tee', False),
             supports_zk=data.get('supports_zk', False),
+            supports_distributed=data.get('supports_distributed', True),
+            supports_sync=data.get('supports_sync', False),
             declaration_hash=data.get('declaration_hash', ''),
             signature=data.get('signature', ''),
             declared_at=data.get('declared_at', time.time()),
@@ -392,10 +407,14 @@ class ComputeOrder:
     # 任务
     task_hash: str                      # 任务哈希
     task_encrypted_blob: str            # 加密任务数据
+    task_topology: TaskTopology = TaskTopology.SINGLE
     
     # 验证选项
     allow_validation: bool = True       # 是否允许验证
     validation_type: ValidationType = ValidationType.HASH_CONSISTENCY
+    validation_confidence: float = 0.0
+    replication_requested: bool = False
+    replication_miners: List[str] = field(default_factory=list)
     
     # 预算（MAIN only）
     total_budget: float = 0.0           # 总预算
@@ -437,6 +456,8 @@ class ComputeOrder:
             raise ValueError(f"时长不能超过 {HardRules.MAX_DURATION_HOURS} 小时")
         if self.duration_hours < HardRules.MIN_DURATION_HOURS:
             raise ValueError(f"时长不能少于 {HardRules.MIN_DURATION_HOURS} 小时")
+        if self.task_topology == TaskTopology.SYNC and self.gpu_count < 2:
+            raise ValueError("SYNC 任务至少需要 2 张 GPU")
         
         # 计算总预算
         self.total_budget = self.max_price * self.gpu_count * self.duration_hours
@@ -450,10 +471,14 @@ class ComputeOrder:
             "duration_hours": self.duration_hours,
             "max_price": self.max_price,
             "execution_mode": self.execution_mode.value,
+            "task_topology": self.task_topology.value,
             "task_hash": self.task_hash,
             "task_encrypted_blob": self.task_encrypted_blob,
             "allow_validation": self.allow_validation,
             "validation_type": self.validation_type.value,
+            "validation_confidence": self.validation_confidence,
+            "replication_requested": self.replication_requested,
+            "replication_miners": self.replication_miners,
             "total_budget": self.total_budget,
             "locked_budget": self.locked_budget,
             "assigned_miners": self.assigned_miners,
@@ -486,11 +511,15 @@ class ComputeOrder:
             duration_hours=data['duration_hours'],
             max_price=data['max_price'],
             execution_mode=TaskExecutionMode(data.get('execution_mode', 'normal')),
+            task_topology=TaskTopology(data.get('task_topology', 'single')),
             task_hash=data['task_hash'],
             task_encrypted_blob=data.get('task_encrypted_blob', ''),
             allow_validation=data.get('allow_validation', True),
             validation_type=ValidationType(data.get('validation_type', 'hash')),
         )
+        order.validation_confidence = float(data.get('validation_confidence', 0.0))
+        order.replication_requested = bool(data.get('replication_requested', False))
+        order.replication_miners = list(data.get('replication_miners', []))
         order.total_budget = data.get('total_budget', 0.0)
         order.locked_budget = data.get('locked_budget', 0.0)
         order.assigned_miners = data.get('assigned_miners', [])
@@ -575,6 +604,11 @@ class ComputeMarketV3:
     WATCHDOG_INTERVAL = 30              # 守护巡检间隔（秒）
     PERF_TRAP_INTERVAL_BLOCKS = 50      # 每个板块每 50 个区块一道性能陷阱题
     PERF_TRAP_INTERVAL_SECONDS = 1800   # 仅在链高不可用时的回退窗口
+    EXPLORATION_EPSILON = 0.10          # ε-greedy 探索比例
+    MAX_REPLICATION_RATE = 0.20         # 最多 20% 订单触发复制验证
+    FORCED_RATIO_MIN = 0.05             # 动态强制比例最小值
+    FORCED_RATIO_MAX = 0.95             # 动态强制比例最大值
+    ANTI_MONOPOLY_BASE = 1.0            # 反垄断平滑参数
     DEFAULT_TEE_MAX_EVIDENCE_AGE_SECONDS = int(_os.getenv("POUW_TEE_MAX_EVIDENCE_AGE_SECONDS", "86400"))
     
     def __init__(self, 
@@ -1183,6 +1217,7 @@ class ComputeMarketV3:
                      task_hash: str,
                      task_encrypted_blob: str = "",
                      execution_mode: TaskExecutionMode = TaskExecutionMode.NORMAL,
+                     task_topology: TaskTopology = TaskTopology.SINGLE,
                      allow_validation: bool = True,
                      tee_node_id: str = "",
                      tee_attestation: Optional[Dict[str, Any]] = None) -> Tuple[Optional[ComputeOrder], str]:
@@ -1208,6 +1243,7 @@ class ComputeMarketV3:
                 duration_hours=duration_hours,
                 max_price=max_price,
                 execution_mode=execution_mode,
+                task_topology=task_topology,
                 task_hash=task_hash,
                 task_encrypted_blob=task_encrypted_blob,
                 allow_validation=allow_validation,
@@ -1259,6 +1295,7 @@ class ComputeMarketV3:
                 "gpu_count": order.gpu_count,
                 "duration_hours": order.duration_hours,
                 "max_price": order.max_price,
+                "task_topology": order.task_topology.value,
                 "task_hash": order.task_hash,
             },
         )
@@ -1296,7 +1333,7 @@ class ComputeMarketV3:
                 if miner.declaration and miner.declaration.price_floor > order.max_price:
                     continue
                 challenge_score = self._protocol_challenge_score(order.order_id, miner, dispatch_seed)
-                dispatch_weight = self._compute_dispatch_weight(miner, challenge_score)
+                dispatch_weight = self._compute_dispatch_weight(miner, challenge_score, order)
                 candidates.append((miner, dispatch_weight, challenge_score))
 
             if not candidates:
@@ -1304,21 +1341,34 @@ class ComputeMarketV3:
 
             weighted_order = self._deterministic_weighted_order(order.order_id, candidates)
             
-            # 分配 GPU
+            # 分配 GPU（按任务拓扑应用约束）
             remaining_gpus = order.gpu_count
             assigned = []
             assigned_gpus = {}
-            
-            for miner, dispatch_weight, challenge_score in weighted_order:
-                if remaining_gpus <= 0:
-                    break
 
-                # 分配
-                gpus_to_assign = min(miner.available_gpus, remaining_gpus)
-                if gpus_to_assign > 0:
-                    assigned.append(miner.miner_id)
-                    assigned_gpus[miner.miner_id] = gpus_to_assign
-                    remaining_gpus -= gpus_to_assign
+            # SINGLE / SYNC：必须同一节点满足整单资源
+            if order.task_topology in (TaskTopology.SINGLE, TaskTopology.SYNC):
+                picked = None
+                for miner, _, _ in weighted_order:
+                    if miner.available_gpus >= order.gpu_count:
+                        picked = miner
+                        break
+                if not picked:
+                    return False, f"{order.task_topology.value} 任务需要同节点 {order.gpu_count} 张 GPU"
+                assigned = [picked.miner_id]
+                assigned_gpus[picked.miner_id] = order.gpu_count
+                remaining_gpus = 0
+            else:
+                # DISTRIBUTED：允许跨节点切分
+                for miner, dispatch_weight, challenge_score in weighted_order:
+                    if remaining_gpus <= 0:
+                        break
+
+                    gpus_to_assign = min(miner.available_gpus, remaining_gpus)
+                    if gpus_to_assign > 0:
+                        assigned.append(miner.miner_id)
+                        assigned_gpus[miner.miner_id] = gpus_to_assign
+                        remaining_gpus -= gpus_to_assign
             
             if remaining_gpus > 0:
                 return False, f"GPU 不足，还需 {remaining_gpus} 张"
@@ -1326,6 +1376,7 @@ class ComputeMarketV3:
             # 更新订单
             order.assigned_miners = assigned
             order.assigned_gpus = assigned_gpus
+            self._maybe_attach_replication(order, weighted_order)
             order.status = OrderStatus.MATCHED
             order.matched_at = time.time()
             self._update_order(order)
@@ -1345,6 +1396,9 @@ class ComputeMarketV3:
                     "challenge_scores": {
                         m.miner_id: round(c, 6) for m, _, c in weighted_order
                     },
+                    "task_topology": order.task_topology.value,
+                    "replication_requested": order.replication_requested,
+                    "replication_miners": order.replication_miners,
                 },
             )
             
@@ -1368,7 +1422,7 @@ class ComputeMarketV3:
         ).hexdigest()
         return int(challenge[:8], 16) / 0xFFFFFFFF
 
-    def _compute_dispatch_weight(self, miner: MinerNode, challenge_score: float) -> float:
+    def _compute_dispatch_weight(self, miner: MinerNode, challenge_score: float, order: ComputeOrder) -> float:
         """计算派单权重（质量+可靠性+时效）并施加风险惩罚。"""
         system_quality = max(0.0, min(1.0, float(miner.system_score) / 2.0))
         ux_rating = (
@@ -1390,7 +1444,15 @@ class ComputeMarketV3:
         age = max(0.0, time.time() - float(miner.last_heartbeat or 0.0))
         timeliness = max(0.0, min(1.0, 1.0 - age / float(self.HEARTBEAT_TIMEOUT)))
 
-        base = 0.45 * quality + 0.30 * reliability + 0.25 * timeliness
+        # 价格竞争力：价格越接近用户上限以下，分数越高。
+        price_floor = float(miner.declaration.price_floor) if miner.declaration else float(order.max_price)
+        if order.max_price > 0:
+            price_competitiveness = max(0.0, min(1.0, 1.0 - price_floor / order.max_price))
+        else:
+            price_competitiveness = 0.0
+
+        # 基础分：信誉 + 价格 + 时效
+        base = 0.50 * quality + 0.30 * price_competitiveness + 0.20 * timeliness
 
         # 协议挑战倍率，范围 [0.85, 1.15]
         challenge_multiplier = 0.85 + 0.30 * max(0.0, min(1.0, challenge_score))
@@ -1399,7 +1461,11 @@ class ComputeMarketV3:
         penalty = min(0.35, failure_ratio * 0.25)
         trap_multiplier = self._get_trap_dispatch_multiplier(miner)
 
-        return max(0.001, base * challenge_multiplier * trap_multiplier - penalty)
+        # 反垄断：近期任务越多，有效分越被抑制。
+        anti_monopoly = math.log1p(self.ANTI_MONOPOLY_BASE + len(miner.current_orders) + max(0, miner.tasks_completed))
+        anti_monopoly = max(1.0, anti_monopoly)
+
+        return max(0.001, (base * challenge_multiplier * trap_multiplier - penalty) / anti_monopoly)
 
     def _compute_ux_stake_factor(self, total_stake_burned: float) -> float:
         """将历史评价质押销毁金额映射为 [0,1] 的可信度因子。"""
@@ -1425,6 +1491,16 @@ class ComputeMarketV3:
 
             seed = hashlib.sha256(f"{order_id}:{round_idx}:{len(pool)}".encode()).hexdigest()
             roll = int(seed[:8], 16) / 0xFFFFFFFF
+            explore_roll = int(seed[8:16], 16) / 0xFFFFFFFF
+
+            # ε-greedy：少量探索，避免头部长期垄断。
+            if explore_roll < self.EXPLORATION_EPSILON:
+                pick_index = int((int(seed[16:24], 16) / 0xFFFFFFFF) * len(pool))
+                pick_index = min(max(pick_index, 0), len(pool) - 1)
+                selected.append(pool.pop(pick_index))
+                round_idx += 1
+                continue
+
             target = roll * total
 
             acc = 0.0
@@ -1468,6 +1544,14 @@ class ComputeMarketV3:
                 if order.execution_mode == TaskExecutionMode.ZK:
                     if not miner.declaration or not miner.declaration.supports_zk:
                         continue
+
+                # 任务拓扑能力匹配
+                if order.task_topology == TaskTopology.DISTRIBUTED:
+                    if miner.declaration and not miner.declaration.supports_distributed:
+                        continue
+                if order.task_topology == TaskTopology.SYNC:
+                    if miner.declaration and not miner.declaration.supports_sync:
+                        continue
                 
                 # 根据调度模式过滤
                 if self.schedule_mode == ScheduleMode.VOLUNTARY:
@@ -1481,7 +1565,17 @@ class ComputeMarketV3:
                 elif self.schedule_mode == ScheduleMode.FORCED:
                     # 强制模式：使用声明的可调度 GPU
                     if miner.declaration:
-                        available = miner.declaration.forced_gpus
+                        available = self._effective_forced_gpus(miner)
+                        if available <= 0:
+                            continue
+                        miner.available_gpus = min(miner.available_gpus, available)
+
+                elif self.schedule_mode == ScheduleMode.HYBRID:
+                    # 混合模式：自主池 + 动态强制池
+                    if miner.declaration:
+                        voluntary = max(0, int(miner.declaration.voluntary_gpus))
+                        dynamic_forced = max(0, int(self._effective_forced_gpus(miner)))
+                        available = voluntary + dynamic_forced
                         if available <= 0:
                             continue
                         miner.available_gpus = min(miner.available_gpus, available)
@@ -1491,6 +1585,60 @@ class ComputeMarketV3:
                 miners.append(miner)
             
             return miners
+
+    def _effective_forced_ratio(self, miner: MinerNode) -> float:
+        """动态强制比例：declared × reputation × utilization。"""
+        if not miner.declaration:
+            return 0.0
+
+        declared = max(0.0, min(1.0, float(miner.declaration.forced_ratio)))
+        rep_norm = max(0.0, min(1.0, float(miner.combined_score)))
+        reputation_factor = 1.0 + (1.0 - rep_norm) * 0.6
+
+        allocatable = max(1, int(miner.declaration.allocatable_gpus))
+        idle_ratio = max(0.0, min(1.0, float(miner.available_gpus) / allocatable))
+        utilization_factor = 1.0 + idle_ratio * 0.5
+
+        effective = declared * reputation_factor * utilization_factor
+        if declared <= 0:
+            return 0.0
+        return max(self.FORCED_RATIO_MIN, min(self.FORCED_RATIO_MAX, effective))
+
+    def _effective_forced_gpus(self, miner: MinerNode) -> int:
+        if not miner.declaration:
+            return 0
+        ratio = self._effective_forced_ratio(miner)
+        return int(miner.declaration.allocatable_gpus * ratio)
+
+    def _maybe_attach_replication(
+        self,
+        order: ComputeOrder,
+        weighted_order: List[Tuple[MinerNode, float, float]],
+    ):
+        """按概率附加复制验证矿工（不参与主执行，仅用于结果复核）。"""
+        if not order.allow_validation:
+            return
+        if order.execution_mode == TaskExecutionMode.TEE:
+            return
+
+        # 订单级确定性抽样，避免被矿工提前操纵。
+        seed = hashlib.sha256(f"replication:{order.order_id}".encode()).hexdigest()
+        draw = int(seed[:8], 16) / 0xFFFFFFFF
+        if draw >= self.MAX_REPLICATION_RATE:
+            return
+
+        main_set = set(order.assigned_miners)
+        validators: List[str] = []
+        for miner, _, _ in weighted_order:
+            if miner.miner_id in main_set:
+                continue
+            validators.append(miner.miner_id)
+            if len(validators) >= 1:
+                break
+
+        if validators:
+            order.replication_requested = True
+            order.replication_miners = validators
     
     def get_order(self, order_id: str) -> Optional[ComputeOrder]:
         """获取订单"""
@@ -2050,10 +2198,28 @@ class ComputeMarketV3:
         if not order.allow_validation:
             return False, "订单不允许验证"
         
+        confidence = 0.0
+
+        # Level 1: 快速校验
+        if order.result_hash:
+            confidence += 0.40
+
+        # Level 2: 抽样/复制校验
+        if order.replication_requested and order.replication_miners:
+            confidence += 0.30
+        elif validation_type in (ValidationType.RUNTIME_STATS, ValidationType.RANDOM_SAMPLING):
+            confidence += 0.20
+
+        # Level 3: 可证明计算（TEE/ZK）
+        if order.execution_mode in (TaskExecutionMode.TEE, TaskExecutionMode.ZK):
+            confidence += 0.30
+
         # 根据验证类型执行
         if validation_type == ValidationType.HASH_CONSISTENCY:
             # 验证结果哈希（最轻量）
             if order.result_hash:
+                order.validation_confidence = min(1.0, confidence)
+                self._update_order(order)
                 return True, f"哈希验证通过: {order.result_hash[:16]}..."
             return False, "无结果哈希"
         
@@ -2062,6 +2228,8 @@ class ComputeMarketV3:
             duration = order.finished_at - order.started_at
             expected = order.duration_hours * 3600
             if duration <= expected * 1.1:  # 允许 10% 误差
+                order.validation_confidence = min(1.0, confidence)
+                self._update_order(order)
                 return True, f"运行时间验证通过: {duration:.1f}s"
             return False, f"运行时间异常: {duration:.1f}s"
         
@@ -2069,7 +2237,11 @@ class ComputeMarketV3:
             # TEE 远程证明
             if order.execution_mode != TaskExecutionMode.TEE:
                 return False, "订单未使用 TEE 模式"
-            return self._validate_tee_attestation(order)
+            ok, msg = self._validate_tee_attestation(order)
+            if ok:
+                order.validation_confidence = min(1.0, confidence)
+                self._update_order(order)
+            return ok, msg
         
         return False, f"不支持的验证类型: {validation_type.value}"
     

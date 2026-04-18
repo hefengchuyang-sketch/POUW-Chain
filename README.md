@@ -254,6 +254,62 @@ This two-layer interpretation helps separate strategic capital allocation from s
 
 ---
 
+## Mechanism Hardening Update (2026-04)
+
+This repository now includes a round of system-level hardening focused on coupling boundaries, incentive alignment, and stress stability.
+
+### 1) Order Allocation Hardening
+
+- **Dynamic forced pool correction**
+    - Effective forced ratio is no longer treated as a static declaration only.
+    - Runtime scheduling applies correction based on miner quality and idle utilization:
+        - `effective_forced_ratio = declared_ratio × reputation_factor × utilization_factor`
+    - HYBRID mode now explicitly operates on `voluntary_pool + dynamic_forced_pool`.
+
+- **Task topology-aware scheduling**
+    - New topology model for multi-GPU jobs:
+        - `SINGLE`: must fit on one miner.
+        - `DISTRIBUTED`: can split across miners.
+        - `SYNC`: requires sync-capable miners and single-node fit by default.
+
+- **Anti-monopoly + exploration**
+    - Dispatch weight now includes anti-monopoly suppression (log-scaled by historical assignment load).
+    - Deterministic weighted selection includes epsilon exploration (`ε-greedy`) to prevent permanent head concentration.
+
+- **Market-strengthened scoring**
+    - Allocation scoring now combines quality, price competitiveness, and timeliness in one dispatch function.
+
+- **Replication-ready validation path**
+    - A bounded portion of orders can attach replication validators for cross-checking (without switching to full redundant execution by default).
+
+### 2) Consensus Hardening
+
+- **Explicit PoUW/PoW switching guardrails**
+    - Added task-pool threshold for PoW fallback.
+    - Added max consecutive PoW blocks guardrail.
+    - Added minimum recent PoUW ratio guardrail to avoid prolonged degradation from useful-work consensus.
+
+- **Three-level validation signal for PoUW proofs**
+    - PoUW proofs now carry a confidence score derived from:
+        - quick checks,
+        - sampled/verified checks,
+        - provable-structure signal.
+    - Block acceptance checks confidence-weighted work sum against threshold.
+
+- **Useful-work reward binding**
+    - Block reward now supports useful-work bonus term:
+        - `reward = base_reward + λ × useful_work_score`
+    - Validation rules were updated accordingly to keep reward-cap checks consistent.
+
+### 3) Stability Goals of This Update
+
+- Reduce declaration-execution mismatch gaming.
+- Reduce long-tail centralization drift in dispatch.
+- Keep chain liveness while preserving useful-work share.
+- Improve confidence in PoUW correctness under adversarial conditions.
+
+---
+
 ## Production Intelligence Layer
 
 Beyond consensus and token flow, POUW-Chain includes a production-oriented control layer that improves routing quality, operational resilience, and reviewability.

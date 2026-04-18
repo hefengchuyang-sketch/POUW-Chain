@@ -101,6 +101,11 @@ class ChainParams:
     
     # POUW
     MIN_POUW_SCORE = 50              # POUW 出块最低分数
+    TASK_POOL_SWITCH_THRESHOLD = 3    # 任务池低于该阈值时可切换 PoW 保底
+    MIN_POUW_RATIO = 0.35             # 最近窗口内最低 PoUW 占比
+    MAX_CONSECUTIVE_POW_BLOCKS = 6    # 最多连续 PoW 块数
+    POUW_CONFIDENCE_THRESHOLD = 12.0  # Σ(confidence*work) 接受阈值
+    USEFUL_WORK_REWARD_LAMBDA = 0.05  # 有用工作奖励系数
     POUW_SCORE_WEIGHTS = {
         "time": 0.3,
         "resource": 0.3,
@@ -624,6 +629,9 @@ class ConsensusEngine:
         self._consensus_round = 0
         self._recent_consensus_selected = deque(maxlen=200)
         self._recent_consensus_mined = deque(maxlen=200)
+        self._consecutive_pow_blocks = 0
+        self._min_pouw_ratio = ChainParams.MIN_POUW_RATIO
+        self._max_consecutive_pow_blocks = ChainParams.MAX_CONSECUTIVE_POW_BLOCKS
         self._sbox_quiz_interval_seconds = 1800  # 每 30 分钟更新一次评分题
         self._sbox_quiz_window_id = -1
         self._sbox_quiz_payload: Dict[str, Any] = {}
@@ -1083,18 +1091,35 @@ class ConsensusEngine:
         if not self.has_pouw_tasks():
             self._auto_generate_pouw()
         has_pouw = self.has_pouw_tasks()
+        task_pool_size = self._current_task_pool_size()
+        pow_fallback_allowed = task_pool_size < ChainParams.TASK_POOL_SWITCH_THRESHOLD
 
         sbox_available = False
         if self._sbox_mining_enabled:
             miner = self._get_sbox_miner()
             sbox_available = miner is not None
 
+        # 守护策略：最近窗口 PoUW 占比过低或连续 PoW 过多时，强制回到有用工作路径。
+        if self._should_force_pouw_guardrail(has_pouw):
+            if sbox_available:
+                selected = ConsensusType.SBOX_POUW
+            else:
+                selected = ConsensusType.POUW
+            self._record_selected_consensus(selected)
+            return selected
+
         if mode == "pouw_only":
             if has_pouw:
                 selected = ConsensusType.POUW
                 self._record_selected_consensus(selected)
                 return selected
-            self.log("⚠️ POUW 任务生成失败，回退 PoW")
+            if not pow_fallback_allowed:
+                self._auto_generate_pouw(count=6)
+                if self.has_pouw_tasks():
+                    selected = ConsensusType.POUW
+                    self._record_selected_consensus(selected)
+                    return selected
+            self.log("⚠️ POUW 任务不足，回退 PoW 保活")
             selected = ConsensusType.POW
             self._record_selected_consensus(selected)
             return selected
@@ -1108,7 +1133,13 @@ class ConsensusEngine:
                 selected = ConsensusType.POUW
                 self._record_selected_consensus(selected)
                 return selected
-            self.log("⚠️ S-Box/POUW 均不可用，回退 PoW")
+            if not pow_fallback_allowed:
+                self._auto_generate_pouw(count=4)
+                if self.has_pouw_tasks():
+                    selected = ConsensusType.POUW
+                    self._record_selected_consensus(selected)
+                    return selected
+            self.log("⚠️ S-Box/POUW 均不可用，回退 PoW 保活")
             selected = ConsensusType.POW
             self._record_selected_consensus(selected)
             return selected
@@ -1136,7 +1167,13 @@ class ConsensusEngine:
                 self._record_selected_consensus(selected)
                 return selected
 
-            self.log("⚠️ S-Box/POUW 均不可用，回退 PoW")
+            if not pow_fallback_allowed:
+                self._auto_generate_pouw(count=4)
+                if self.has_pouw_tasks():
+                    selected = ConsensusType.POUW
+                    self._record_selected_consensus(selected)
+                    return selected
+            self.log("⚠️ S-Box/POUW 均不可用，回退 PoW 保活")
             selected = ConsensusType.POW
             self._record_selected_consensus(selected)
             return selected
@@ -1164,7 +1201,13 @@ class ConsensusEngine:
             self._record_selected_consensus(selected)
             return selected
 
-        self.log("⚠️ S-Box/POUW 均不可用，回退 PoW")
+        if not pow_fallback_allowed:
+            self._auto_generate_pouw(count=4)
+            if self.has_pouw_tasks():
+                selected = ConsensusType.POUW
+                self._record_selected_consensus(selected)
+                return selected
+        self.log("⚠️ S-Box/POUW 均不可用，回退 PoW 保活")
         selected = ConsensusType.POW
         self._record_selected_consensus(selected)
         return selected
@@ -1180,8 +1223,38 @@ class ConsensusEngine:
         """记录最近成功出块的共识类型。"""
         try:
             self._recent_consensus_mined.append(consensus.value)
+            if consensus == ConsensusType.POW:
+                self._consecutive_pow_blocks += 1
+            else:
+                self._consecutive_pow_blocks = 0
         except Exception:
             pass
+
+    def _current_task_pool_size(self) -> int:
+        """估算任务池规模（POUW 证明 + 待处理交易）。"""
+        return int(len(self.pending_pouw) + len(self.pending_transactions))
+
+    def _current_pouw_ratio(self) -> float:
+        """计算最近窗口内 PoUW/SBOX_POUW 占比。"""
+        values = list(self._recent_consensus_mined)
+        if not values:
+            return 1.0
+        pouw_like = sum(
+            1
+            for x in values
+            if x in (ConsensusType.POUW.value, ConsensusType.SBOX_POUW.value)
+        )
+        return pouw_like / len(values)
+
+    def _should_force_pouw_guardrail(self, has_pouw: bool) -> bool:
+        """活性与占比守护：避免长时间退化为 PoW。"""
+        if not has_pouw:
+            return False
+        if self._consecutive_pow_blocks >= self._max_consecutive_pow_blocks:
+            return True
+        if self._current_pouw_ratio() < self._min_pouw_ratio:
+            return True
+        return False
 
     def _build_consensus_distribution(self, values: List[str]) -> Dict[str, Any]:
         """构建共识分布统计。"""
@@ -1390,6 +1463,28 @@ class ConsensusEngine:
         except Exception:
             return None
 
+    def _compute_proof_confidence(self, proof: POUWProof) -> float:
+        """三层校验置信度：快速校验 + 抽样 + 可证明执行。"""
+        quick = 0.4 if proof.compute_hash else 0.0
+        sample = 0.35 if proof.verified else 0.0
+        # 使用结构化证明作为可证明计算代理信号（兼容无 TEE/ZK 场景）
+        provable = 0.25 if self._extract_structured_proof(proof.compute_hash) else 0.0
+        return round(max(0.0, min(1.0, quick + sample + provable)), 4)
+
+    def _calculate_useful_work_bonus(self, block: Block) -> float:
+        """有用工作奖励：reward = base + λ * useful_work_score。"""
+        if block.consensus_type not in (ConsensusType.POUW, ConsensusType.SBOX_POUW):
+            return 0.0
+        proofs = block.pouw_proofs or []
+        if not proofs:
+            return 0.0
+        useful_work_score = 0.0
+        for p in proofs:
+            work = float(p.get("work_amount", p.get("work_score", 0.0)))
+            confidence = float(p.get("confidence_score", 0.0))
+            useful_work_score += max(0.0, work) * max(0.0, min(1.0, confidence))
+        return round(max(0.0, useful_work_score) * ChainParams.USEFUL_WORK_REWARD_LAMBDA, 8)
+
     def _get_dynamic_work_threshold(self, block: Block) -> float:
         """计算动态工作量门槛（含无单场景扰动）。"""
         threshold = float(self.current_work_threshold)
@@ -1470,11 +1565,15 @@ class ConsensusEngine:
         
         # 计算总工作量
         total_work = sum(p.compute_work_score() for p in proofs)
+        confidence_weighted_work = sum(
+            p.compute_work_score() * self._compute_proof_confidence(p)
+            for p in proofs
+        )
         
         # 工作量通道动态难度阈值（与 hash 难度并行调节）。
         min_threshold = self._get_dynamic_work_threshold(block)
         
-        if total_work >= min_threshold:
+        if total_work >= min_threshold and confidence_weighted_work >= ChainParams.POUW_CONFIDENCE_THRESHOLD:
             block.pouw_proofs = [
                 {
                     "proof_id": p.proof_id,
@@ -1485,6 +1584,7 @@ class ConsensusEngine:
                     "work_score": round(p.compute_work_score(), 2),  # alias for backward compat
                     "execution_time": round(max(p.execution_time, 0.0001), 6),
                     "quality_score": round(p.quality_score, 2),
+                    "confidence_score": self._compute_proof_confidence(p),
                     "miner_id": p.miner_id,
                     "verified": p.verified,
                     "proof_meta": self._extract_structured_proof(p.compute_hash) or {},
@@ -1513,7 +1613,10 @@ class ConsensusEngine:
         # 工作量不足，将证明放回队列避免浪费
         with self._lock:
             self.pending_pouw = proofs + self.pending_pouw
-        self.log(f"⚠️ POUW 工作量不足: {total_work:.1f} < {min_threshold}")
+        self.log(
+            f"⚠️ POUW 工作量/置信度不足: work={total_work:.1f}<{min_threshold} "
+            f"or confidence_work={confidence_weighted_work:.2f}<{ChainParams.POUW_CONFIDENCE_THRESHOLD}"
+        )
         return False
     
     def _get_sbox_miner(self):
@@ -1699,6 +1802,7 @@ class ConsensusEngine:
                         "work_score": round(p.compute_work_score(), 2),
                         "execution_time": round(max(p.execution_time, 0.0001), 6),
                         "quality_score": round(p.quality_score, 2),
+                        "confidence_score": self._compute_proof_confidence(p),
                         "miner_id": p.miner_id,
                         "verified": p.verified,
                         "proof_meta": self._extract_structured_proof(p.compute_hash) or {},
@@ -1869,6 +1973,10 @@ class ConsensusEngine:
         mining_time = time.time() - start_time
         
         if success:
+            useful_bonus = self._calculate_useful_work_bonus(block)
+            if useful_bonus > 0:
+                block.block_reward = round(block.block_reward + useful_bonus, 8)
+
             # 清理已打包交易
             packed_count = len(block.transactions)
             self.pending_transactions = self.pending_transactions[packed_count:]
@@ -1924,7 +2032,10 @@ class ConsensusEngine:
                     )
                     self.current_work_threshold = new_work_threshold
             
-            self.log(f"✅ 区块 #{block.height} [{block.block_type}] 挖出 ({mining_time:.2f}s, 奖励={block.block_reward:.4f})")
+            self.log(
+                f"✅ 区块 #{block.height} [{block.block_type}] 挖出 "
+                f"({mining_time:.2f}s, 奖励={block.block_reward:.4f}, useful_bonus={useful_bonus:.4f})"
+            )
             
             return block
         
@@ -1979,12 +2090,13 @@ class ConsensusEngine:
         # 安全加固：Coinbase 奖励金额验证
         if block.block_reward > 0:
             expected_reward = self.reward_calculator.get_block_reward(block.height)
+            useful_bonus = self._calculate_useful_work_bonus(block)
             # 独立验证 total_fees（不信任区块自报的 total_fees）
             actual_fees = sum(tx.get("fee", 0) for tx in (block.transactions or [])
                              if tx.get("tx_type", "transfer") != "coinbase")
             if abs(block.total_fees - actual_fees) > 0.00000001:
                 return False, f"total_fees mismatch: declared {block.total_fees}, actual {actual_fees}"
-            max_allowed = expected_reward + actual_fees + 0.00000001
+            max_allowed = expected_reward + useful_bonus + actual_fees + 0.00000001
             if block.block_reward > max_allowed:
                 return False, f"Coinbase reward too high: {block.block_reward} > max {max_allowed}"
         
@@ -2014,6 +2126,7 @@ class ConsensusEngine:
             # Validate structural integrity of each proof
             seen_task_ids = set()
             seen_proof_hashes = set()
+            confidence_work_sum = 0.0
             for i, proof in enumerate(block.pouw_proofs):
                 if not isinstance(proof, dict):
                     return False, f"POUW proof #{i} is not a dict"
@@ -2026,6 +2139,12 @@ class ConsensusEngine:
                 work = proof.get('work_amount', proof.get('work_score', 0))
                 if not isinstance(work, (int, float)) or work <= 0:
                     return False, f"POUW proof #{i} has invalid work_amount: {work}"
+
+                confidence = proof.get('confidence_score', 0.4 if proof.get('verified') else 0.0)
+                if not isinstance(confidence, (int, float)):
+                    return False, f"POUW proof #{i} invalid confidence_score: {confidence}"
+                confidence = max(0.0, min(1.0, float(confidence)))
+                confidence_work_sum += float(work) * confidence
 
                 # 计算证明必须存在且格式合理（前缀=值）
                 compute_hash = proof.get('compute_hash', '')
@@ -2087,6 +2206,12 @@ class ConsensusEngine:
                 # D-01 fix: 证明必须绑定到出块矿工
                 if proof.get('miner_id', '') != block.miner_id:
                     return False, f"POUW proof #{i} miner_id ({proof.get('miner_id', '')}) != block miner ({block.miner_id})"
+
+            if confidence_work_sum < ChainParams.POUW_CONFIDENCE_THRESHOLD:
+                return False, (
+                    f"POUW confidence-weighted work too low: "
+                    f"{confidence_work_sum:.2f} < {ChainParams.POUW_CONFIDENCE_THRESHOLD}"
+                )
         elif block.consensus_type == ConsensusType.SBOX_POUW:
             # S-Box PoUW 验证
             if not block.sbox_hex:
@@ -2130,11 +2255,19 @@ class ConsensusEngine:
             
             # 验证 POUW 证明（如果有）
             if block.pouw_proofs:
+                confidence_work_sum = 0.0
                 for i, proof in enumerate(block.pouw_proofs):
                     if not isinstance(proof, dict):
                         return False, f"SBOX_POUW proof #{i} is not a dict"
                     if proof.get('verified') is not True:
                         return False, f"SBOX_POUW proof #{i} is not verified"
+                    work = float(proof.get('work_amount', proof.get('work_score', 0.0)))
+                    confidence = float(proof.get('confidence_score', 0.4))
+                    confidence_work_sum += max(0.0, work) * max(0.0, min(1.0, confidence))
+                if confidence_work_sum < (ChainParams.POUW_CONFIDENCE_THRESHOLD * 0.6):
+                    return False, (
+                        f"SBOX_POUW confidence-weighted work too low: {confidence_work_sum:.2f}"
+                    )
         
         # UTXO 交易验证
         if self.utxo_store and block.transactions:
@@ -2289,9 +2422,10 @@ class ConsensusEngine:
             # 安全加固：Coinbase 奖励金额上限验证（防止伪造膨胀奖励）
             if block.block_reward > 0:
                 expected_reward = self.reward_calculator.get_block_reward(block.height)
+                useful_bonus = self._calculate_useful_work_bonus(block)
                 actual_fees = sum(tx.get("fee", 0) for tx in (block.transactions or [])
                                  if tx.get("tx_type", "transfer") != "coinbase")
-                max_allowed = expected_reward + actual_fees + 0.00000001
+                max_allowed = expected_reward + useful_bonus + actual_fees + 0.00000001
                 if block.block_reward > max_allowed:
                     self.log(f"[SYNC] Coinbase 奖励超限: {block.block_reward} > max {max_allowed}")
                     return False
