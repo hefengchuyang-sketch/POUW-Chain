@@ -298,8 +298,27 @@ class DeviceDetector:
     """设备检测器。"""
     
     def __init__(self, log_fn: Callable = print):
-        self.log = log_fn
+        self._log_fn = log_fn
+        self.log = self._safe_log
         self.profile: Optional[DeviceProfile] = None
+
+    def _safe_log(self, msg: str):
+        """安全日志输出：兼容 Windows GBK 控制台编码。"""
+        import re
+
+        text = str(msg)
+        try:
+            self._log_fn(text)
+            return
+        except Exception:
+            pass
+
+        # 回退：移除 emoji/变体选择符后再次输出
+        sanitized = re.sub(r"[\U00010000-\U0010FFFF\uFE0E\uFE0F]", "", text)
+        try:
+            self._log_fn(sanitized)
+        except Exception:
+            print(sanitized.encode("ascii", "replace").decode("ascii"))
     
     def detect_all(self) -> DeviceProfile:
         """检测所有设备。"""

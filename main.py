@@ -106,7 +106,7 @@ class Logger:
         """安全打印，处理编码问题"""
         import re
         # 先移除可能导致编码问题的字符
-        safe_msg = re.sub(r'[\U0001F600-\U0001F64F\U0001F300-\U0001F5FF\U0001F680-\U0001F6FF\U0001F1E0-\U0001F1FF\u2600-\u26FF\u2700-\u27BF\u2300-\u23FF\u2B50\u2705\u274C\u26A0\u2699\u26D4\u2B06\u2B07\u27A1\u2B05\u23F3\u231B\u23F0\u23F1\u23F2\u23F8\u23E9\u23EA\u23EB\u23EC\u25B6\u25C0\u23FA\U0001F4B0\U0001F4BC\U0001F528\U0001F517\U0001F4E1\U00002699\U0001F5A5\U000026CF]', '', msg)
+        safe_msg = re.sub(r'[\U0001F600-\U0001F64F\U0001F300-\U0001F5FF\U0001F680-\U0001F6FF\U0001F1E0-\U0001F1FF\u2600-\u26FF\u2700-\u27BF\u2300-\u23FF\u2B50\u2705\u274C\u26A0\u2699\u26D4\u2B06\u2B07\u27A1\u2B05\u23F3\u231B\u23F0\u23F1\u23F2\u23F8\u23E9\u23EA\u23EB\u23EC\u25B6\u25C0\u23FA\U0001F4B0\U0001F4BC\U0001F528\U0001F517\U0001F4E1\U00002699\U0001F5A5\U000026CF\uFE0E\uFE0F]', '', msg)
         try:
             print(safe_msg)
         except Exception:
@@ -120,6 +120,10 @@ class Logger:
     def warn(self, msg: str):
         self._safe_print(f"{Fore.YELLOW}[{self._time()}] [{self.name}] [WARN] {msg}{Style.RESET_ALL}")
         self._logger.warning(msg)
+
+    def warning(self, msg: str):
+        """兼容标准 logging 接口命名。"""
+        self.warn(msg)
     
     def error(self, msg: str):
         self._safe_print(f"{Fore.RED}[{self._time()}] [{self.name}] [ERROR] {msg}{Style.RESET_ALL}")
