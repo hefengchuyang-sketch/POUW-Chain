@@ -271,11 +271,56 @@ class POUWNode:
             from core.security import generate_self_signed_cert
             cert_dir = os.path.join(self.config["storage"]["data_dir"], "certs")
             self.ssl_cert, self.ssl_key = generate_self_signed_cert(cert_dir)
+            if not self.ssl_cert or not self.ssl_key:
+                raise RuntimeError("TLS certificate generation returned empty paths")
             log.info(f"TLS 证书就绪: {cert_dir}")
         except Exception as e:
-            log.warn(f"TLS 证书生成失败: {e}，将使用明文通信")
+            from core.security import is_production_mode
+            if is_production_mode():
+                raise RuntimeError(
+                    "生产环境 TLS 初始化失败，已拒绝启动。"
+                    f" 详情: {e}"
+                )
+            log.warn(f"TLS 证书生成失败: {e}，开发环境允许降级为明文通信")
             self.ssl_cert = None
             self.ssl_key = None
+
+    def _run_security_preflight(self):
+        """启动前安全基线检查（生产环境 fail-closed）。"""
+        from core.security import is_production_mode, get_runtime_environment
+
+        runtime_env = get_runtime_environment()
+        log.info(f"运行环境: {runtime_env}")
+
+        if not is_production_mode():
+            return
+
+        issues = []
+
+        admin_key = (
+            os.environ.get("POUW_ADMIN_KEY", "")
+            or os.environ.get("MAINCOIN_ADMIN_KEY", "")
+            or self.config.get("api", {}).get("admin_key", "")
+        )
+        if not admin_key:
+            issues.append("缺少固定管理密钥: 请设置 POUW_ADMIN_KEY 或 MAINCOIN_ADMIN_KEY")
+
+        require_local_auth = os.environ.get("REQUIRE_LOCAL_AUTH", "true").lower() == "true"
+        if not require_local_auth:
+            issues.append("REQUIRE_LOCAL_AUTH=false 会导致本地请求自动信任")
+
+        allow_user_override = os.environ.get("ALLOW_AUTH_USER_OVERRIDE", "false").lower() == "true"
+        if allow_user_override:
+            issues.append("ALLOW_AUTH_USER_OVERRIDE=true 允许请求头覆盖认证主体")
+
+        ca_path = os.environ.get("MAINCOIN_CA_CERT", "")
+        if not ca_path:
+            issues.append("缺少 MAINCOIN_CA_CERT，TLS 客户端无法完成证书校验")
+
+        if issues:
+            raise RuntimeError(
+                "生产环境安全基线检查未通过:\n- " + "\n- ".join(issues)
+            )
     
     def _init_wallet(self):
         """初始化钱包。"""
@@ -448,7 +493,11 @@ class POUWNode:
                 log.info(f"前端静态文件: {static_dir}")
             
             # 从配置读取安全参数（优先环境变量）
-            admin_key = os.environ.get("POUW_ADMIN_KEY", "") or self.config.get("api", {}).get("admin_key", "")
+            admin_key = (
+                os.environ.get("POUW_ADMIN_KEY", "")
+                or os.environ.get("MAINCOIN_ADMIN_KEY", "")
+                or self.config.get("api", {}).get("admin_key", "")
+            )
             cors_origins = rpc_config.get("cors_origins", [])
             rate_limit = rpc_config.get("rate_limit", 200)
             allowed_methods = rpc_config.get("allowed_methods", [])
@@ -651,6 +700,8 @@ class POUWNode:
         log.info("=" * 50)
         log.info("POUW Multi-Sector Chain 节点启动中...")
         log.info("=" * 50)
+
+        self._run_security_preflight()
         
         self._init_storage()
         self._init_tls()

@@ -70,9 +70,15 @@ try:
 except ImportError:
     HAS_CRYPTOGRAPHY = False
 
+try:
+    from core.security import is_production_mode
+except Exception:
+    def is_production_mode() -> bool:
+        return os.environ.get("POUW_ENV", "").lower() in ("production", "mainnet")
+
 # 生产模式安全检查——禁止 XOR 模拟加密
 HAS_REAL_CRYPTO = HAS_PYCRYPTODOME or HAS_CRYPTOGRAPHY
-PRODUCTION_MODE = os.environ.get("POUW_ENV", "").lower() in ("production", "mainnet")
+PRODUCTION_MODE = is_production_mode()
 
 if not HAS_REAL_CRYPTO:
     if PRODUCTION_MODE:

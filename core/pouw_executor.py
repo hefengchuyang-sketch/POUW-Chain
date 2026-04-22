@@ -307,6 +307,11 @@ class PoUWExecutor:
 
     def _gen_custom_code(self, kwargs: Dict) -> Tuple[Dict, float]:
         """生成自定义代码任务参数。"""
+        if self._is_custom_code_blocked():
+            raise ValueError(
+                "CUSTOM_CODE is disabled in production. Use DOCKER_TASK instead "
+                "or set POUW_ALLOW_CUSTOM_CODE=true explicitly."
+            )
         code = kwargs.get("code", "result = {'status': 'empty'}")
         data = kwargs.get("data", {})
         return {"code": code, "data": data}, 0.5
@@ -705,6 +710,20 @@ class PoUWExecutor:
     # 沙箱递归深度限制（防止栈溢出 DoS）
     _SANDBOX_RECURSION_LIMIT = 50
 
+    @staticmethod
+    def _is_custom_code_blocked() -> bool:
+        """生产环境默认禁用进程内自定义代码执行。"""
+        allow_custom = os.environ.get("POUW_ALLOW_CUSTOM_CODE", "false").strip().lower() in (
+            "1", "true", "yes", "on"
+        )
+        if allow_custom:
+            return False
+        try:
+            from core.security import is_production_mode
+            return is_production_mode()
+        except Exception:
+            return os.environ.get("POUW_ENV", "").lower() in ("production", "mainnet")
+
     def _exec_with_timeout(
         self,
         code: str,
@@ -756,6 +775,13 @@ class PoUWExecutor:
         注意：此模式不提供与 Docker 相同的隔离级别，
         生产环境应使用 DOCKER_TASK 类型。
         """
+        if self._is_custom_code_blocked():
+            return (
+                {"error": "CUSTOM_CODE disabled in production; use DOCKER_TASK"},
+                0.0,
+                "custom_code_blocked",
+            )
+
         code = task.params.get("code", "")
         data = task.params.get("data", {})
 

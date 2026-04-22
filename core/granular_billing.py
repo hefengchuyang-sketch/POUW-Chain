@@ -362,7 +362,7 @@ class GranularBillingEngine:
                 return coeff
         return 1.0
     
-    def get_rates(self, gpu_type: str = None) -> Dict:
+    def get_rates(self, gpu_type: Optional[str] = None) -> Dict:
         """获取计费费率"""
         with self._lock:
             gpu_rates = {}
@@ -642,8 +642,8 @@ class GranularBillingEngine:
     def update_rate(
         self,
         resource_type: ResourceType,
-        base_rate: float = None,
-        market_multiplier: float = None,
+        base_rate: Optional[float] = None,
+        market_multiplier: Optional[float] = None
     ):
         """更新费率"""
         with self._lock:
@@ -735,11 +735,13 @@ _cost_estimator: Optional[CostEstimator] = None
 
 
 def get_granular_billing() -> Tuple[GranularBillingEngine, CostEstimator]:
-    """获取细粒度计费系统"""
     global _billing_engine, _cost_estimator
     
     if _billing_engine is None:
         _billing_engine = GranularBillingEngine()
         _cost_estimator = CostEstimator(_billing_engine)
+    
+    assert _billing_engine is not None
+    assert _cost_estimator is not None
     
     return _billing_engine, _cost_estimator

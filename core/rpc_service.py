@@ -167,6 +167,29 @@ class NodeRPCService:
             or default
         )
 
+    def _rpc_internal_error(
+        self,
+        method: str,
+        error: Exception,
+        fallback: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """统一构造 RPC 内部错误响应，避免接口吞异常后假成功。"""
+        logger.exception("RPC method failed: %s", method, exc_info=error)
+        result: Dict[str, Any] = {
+            "success": False,
+            "error": "internal_error",
+            "errorCode": "INTERNAL_ERROR",
+            "method": method,
+            "timestamp": time.time(),
+        }
+        if fallback:
+            result.update(fallback)
+        return result
+
+    def _rpc_log_exception(self, method: str, error: Exception) -> None:
+        """记录异常但保留既有返回结构（用于历史 List/标量接口兼容）。"""
+        logger.exception("RPC method failed: %s", method, exc_info=error)
+
     def _compute_v3_required(self) -> bool:
         """是否强制 compute 写路径必须走 V3（禁用静默回退）。"""
         raw = str(os.getenv("POUW_COMPUTE_V3_REQUIRED", "true")).strip().lower()
@@ -988,10 +1011,11 @@ class NodeRPCService:
                 "policy": get_sbox_encryption_policy(),
             }
         except Exception as e:
-            return {
+            return self._rpc_internal_error("sbox_getEncryptionPolicy", e, {
                 "status": "failed",
+                "policy": None,
                 "message": f"policy_unavailable:{type(e).__name__}",
-            }
+            })
 
     def _sbox_set_encryption_policy(self,
                                     policyVersion: str = None,
@@ -1019,10 +1043,11 @@ class NodeRPCService:
                 "policy": policy,
             }
         except Exception as e:
-            return {
+            return self._rpc_internal_error("sbox_setEncryptionPolicy", e, {
                 "status": "failed",
+                "policy": None,
                 "message": f"policy_update_failed:{type(e).__name__}:{e}",
-            }
+            })
 
     def _sbox_get_downgrade_audit(self, limit: int = 200, **kwargs) -> Dict:
         """查询 S-Box 降级审计事件。"""
@@ -1036,12 +1061,12 @@ class NodeRPCService:
                 "total": len(events),
             }
         except Exception as e:
-            return {
+            return self._rpc_internal_error("sbox_getDowngradeAudit", e, {
                 "status": "failed",
                 "events": [],
                 "total": 0,
                 "message": f"audit_unavailable:{type(e).__name__}",
-            }
+            })
     
     # ============== 账户方法 ==============
     
@@ -2389,7 +2414,9 @@ class NodeRPCService:
             
             return {"error": f"订单 {orderId} 不存在"}
         except Exception as e:
-            return {"error": "internal_error"}
+            return self._rpc_internal_error("order_getDetail", e, {
+                "id": orderId,
+            })
     
     # ============== 质押方法 ==============
     
@@ -7213,6 +7240,7 @@ class NodeRPCService:
             # 返回空列表如果没TEE 节点
             return []
         except Exception as e:
+            self._rpc_log_exception("tee_listNodes", e)
             return []
     
     def _tee_create_confidential_task(
@@ -7343,12 +7371,11 @@ class NodeRPCService:
                 "teePricing": tee_prices,
             }
         except Exception as e:
-            return {
+            return self._rpc_internal_error("tee_getPricing", e, {
                 "gpuType": gpuType,
                 "basePrice": 1.0,
                 "teePricing": {},
-                "error": "internal_error"
-            }
+            })
 
     def _tee_get_rollout_audit(self, limit: int = 100, **kwargs) -> Dict:
         """获取 TEE 灰度策略审计事件。"""
@@ -7458,16 +7485,16 @@ class NodeRPCService:
                 "createdAt": order.created_at,
             }
         except Exception as e:
-            return {
+            return self._rpc_internal_error("orderbook_submitAsk", e, {
                 "orderId": f"ask_{uuid.uuid4().hex[:8]}",
                 "minerId": miner_id,
                 "gpuType": gpuType,
                 "price": ask_price,
                 "availableHours": hours,
-                "status": "pending",
+                "status": "failed",
                 "matched": False,
                 "createdAt": time.time(),
-            }
+            })
     
     def _orderbook_submit_bid(
         self,
@@ -7533,16 +7560,16 @@ class NodeRPCService:
                 "createdAt": order.created_at,
             }
         except Exception as e:
-            return {
+            return self._rpc_internal_error("orderbook_submitBid", e, {
                 "orderId": f"bid_{uuid.uuid4().hex[:8]}",
                 "userId": user_id,
                 "gpuType": gpuType,
                 "maxPrice": bid_price,
                 "requiredHours": hours,
-                "status": "pending",
+                "status": "failed",
                 "matched": False,
                 "createdAt": time.time(),
-            }
+            })
     
     def _orderbook_cancel_order(self, orderId: str, **kwargs) -> Dict:
         """取消订单"""
@@ -7603,15 +7630,13 @@ class NodeRPCService:
                 "timestamp": time.time(),
             }
         except Exception as e:
-            return {
+            return self._rpc_internal_error("orderbook_getOrderbook", e, {
                 "gpuType": gpu_name,
                 "asks": [],
                 "bids": [],
                 "spread": 0,
                 "midPrice": 0,
-                "timestamp": time.time(),
-                "error": "internal_error",
-            }
+            })
     
     def _orderbook_get_market_price(self, gpuType: str = "RTX4090", sector: str = None, **kwargs) -> Dict:
         """获取市场价格"""
@@ -7665,15 +7690,14 @@ class NodeRPCService:
                 "timestamp": time.time(),
             }
         except Exception as e:
-            return {
+            return self._rpc_internal_error("orderbook_getMarketPrice", e, {
                 "gpuType": gpu_name,
                 "bestAsk": 0,
                 "bestBid": 0,
                 "spread": 0,
                 "midPrice": 0,
-                "error": "internal_error",
-                "timestamp": time.time(),
-            }
+                "ammPrice": None,
+            })
     
     def _orderbook_get_my_orders(self, userId: str = None, minerId: str = None, **kwargs) -> Dict:
         """获取我的订单"""
@@ -7727,6 +7751,7 @@ class NodeRPCService:
                 "matchedAt": t.get("executed_at"),
             } for t in trades]
         except Exception as e:
+            self._rpc_log_exception("orderbook_getMatches", e)
             return []
     
     # ============== 期货合约方法 ==============
@@ -7849,11 +7874,10 @@ class NodeRPCService:
                 "total": len(contracts),
             }
         except Exception as e:
-            return {
+            return self._rpc_internal_error("futures_listContracts", e, {
                 "contracts": [],
                 "total": 0,
-                "error": "internal_error",
-            }
+            })
     
     def _futures_cancel_contract(self, contractId: str, reason: str = None, **kwargs) -> Dict:
         """取消期货合约"""
@@ -7907,13 +7931,11 @@ class NodeRPCService:
                 "timestamp": time.time(),
             }
         except Exception as e:
-            return {
+            return self._rpc_internal_error("futures_getPricingCurve", e, {
                 "gpuType": gpuType,
                 "spotPrice": 1.0,
                 "curve": [],
-                "error": "internal_error",
-                "timestamp": time.time(),
-            }
+            })
     
     # ============== 细粒度计费方==============
     
@@ -8068,12 +8090,11 @@ class NodeRPCService:
                 "assumptions": estimate.get("assumptions"),
             }
         except Exception as e:
-            return {
+            return self._rpc_internal_error("billing_estimateTask", e, {
                 "gpuType": gpuType,
                 "estimatedHours": hours,
                 "estimatedCost": 0,
-                "error": "internal_error",
-            }
+            })
     
     # ============== 数据生命周期方法 ==============
     
@@ -9064,11 +9085,10 @@ class NodeRPCService:
                 "total": len(proposals),
             }
         except Exception as e:
-            return {
+            return self._rpc_internal_error("dao_listProposals", e, {
                 "proposals": [],
                 "total": 0,
-                "error": "internal_error",
-            }
+            })
     
     def _dao_get_treasury(self, **kwargs) -> Dict:
         """获取国库信息"""
@@ -9088,12 +9108,15 @@ class NodeRPCService:
                 "recentTransactions": system["treasury"].get_transactions(10),
             }
         except Exception as e:
-            return {
+            return self._rpc_internal_error("dao_getTreasury", e, {
                 "balance": 0,
                 "totalDeposits": 0,
                 "totalWithdrawals": 0,
-                "error": "internal_error",
-            }
+                "pendingWithdrawals": 0,
+                "signers": [],
+                "requiredSignatures": 0,
+                "recentTransactions": [],
+            })
     
     def _dao_get_treasury_config(self, **kwargs) -> Dict:
         """获取财库配置（税率、分配规则等）"""
@@ -9134,7 +9157,20 @@ class NodeRPCService:
             
             return result
         except Exception as e:
-            return {"error": "internal_error"}
+            return self._rpc_internal_error("dao_getTreasuryConfig", e, {
+                "blockReward": {
+                    "treasuryRate": 0.03,
+                    "minerRate": 0.97,
+                    "description": "区块奖励: 97% 矿工 + 3% 财库",
+                },
+                "transactionFee": {
+                    "burnRate": 0.005,
+                    "minerRate": 0.003,
+                    "foundationRate": 0.002,
+                    "totalRate": 0.01,
+                    "description": "交易 0.5% 销+ 0.3% 矿工 + 0.2% 基金会多",
+                },
+            })
     
     def _dao_set_treasury_rate(self, rate: float = None, **kwargs) -> Dict:
         """
@@ -9166,7 +9202,10 @@ class NodeRPCService:
                 "message": f"财库税率已从 {old_rate*100:.1f}% 改为 {rate*100:.1f}%"
             }
         except Exception as e:
-            return {"success": False, "message": "operation_failed"}
+            return self._rpc_internal_error("dao_setTreasuryRate", e, {
+                "success": False,
+                "message": "operation_failed",
+            })
     
     # ============== 国库透明度 ==============
     
@@ -9241,7 +9280,20 @@ class NodeRPCService:
                 },
             }
         except Exception as e:
-            return {"error": "internal_error"}
+            return self._rpc_internal_error("dao_getTreasuryLimits", e, {
+                "treasury": {
+                    "balance": 0,
+                    "available": 0,
+                    "locked": 0,
+                },
+                "compensateLimits": {},
+                "dailyUsage": {},
+                "pendingDebts": {
+                    "count": 0,
+                    "totalAmount": 0,
+                },
+                "incomeStreams": {},
+            })
     
     # ============== 板块动态管理 ==============
     
@@ -9272,7 +9324,12 @@ class NodeRPCService:
                 "totalInactive": sum(1 for s in sectors if not s["active"]),
             }
         except Exception as e:
-            return {"error": "internal_error"}
+            return self._rpc_internal_error("sector_getList", e, {
+                "sectors": [],
+                "activeSectors": [],
+                "totalActive": 0,
+                "totalInactive": 0,
+            })
     
     def _sector_add(self, proposerId: str = "", name: str = "", base_reward: float = None,
                     exchange_rate: float = None, max_supply: float = None,
@@ -9329,7 +9386,9 @@ class NodeRPCService:
         except ValueError:
             return {"success": False, "error": "invalid_sector_parameters"}
         except Exception as e:
-            return {"success": False, "error": "internal_error"}
+            return self._rpc_internal_error("sector_add", e, {
+                "success": False,
+            })
     
     def _sector_deactivate(self, proposerId: str = "", name: str = "", **kwargs) -> Dict:
         """提议废除板块（需社区投票通过）
@@ -9366,7 +9425,9 @@ class NodeRPCService:
         except ValueError:
             return {"success": False, "error": "invalid_sector_parameters"}
         except Exception as e:
-            return {"success": False, "error": "internal_error"}
+            return self._rpc_internal_error("sector_deactivate", e, {
+                "success": False,
+            })
     
     def _dao_get_treasury_report(self, **kwargs) -> Dict:
         """获取财库透明度报"""
@@ -9428,7 +9489,10 @@ class NodeRPCService:
                 }
             return {"success": False, "message": msg}
         except Exception as e:
-            return {"success": False, "message": "operation_failed"}
+            return self._rpc_internal_error("dao_createTreasuryProposal", e, {
+                "success": False,
+                "message": "operation_failed",
+            })
     
     def _dao_treasury_withdraw(self, proposalId: str = "",
                                 amount: float = 0,
@@ -9466,7 +9530,10 @@ class NodeRPCService:
             success, msg = manager.execute_proposal(proposalId)
             return {"success": success, "message": msg}
         except Exception as e:
-            return {"success": False, "message": "operation_failed"}
+            return self._rpc_internal_error("dao_treasuryWithdraw", e, {
+                "success": False,
+                "message": "operation_failed",
+            })
     
     def _dao_get_governance_params(self, **kwargs) -> Dict:
         """获取治理参数"""
@@ -9486,12 +9553,15 @@ class NodeRPCService:
                 "emergencyThreshold": 75,
             }
         except Exception as e:
-            return {
+            return self._rpc_internal_error("dao_getGovernanceParams", e, {
                 "votingPeriod": 7 * 86400,
                 "quorumPercentage": 10,
                 "approvalThreshold": 66,
-                "error": "internal_error",
-            }
+                "proposalDeposit": 1000,
+                "executionDelay": 2 * 86400,
+                "emergencyVotingPeriod": 24 * 3600,
+                "emergencyThreshold": 75,
+            })
     
     def _dao_get_staking_info(self, userId: str, **kwargs) -> Dict:
         """获取质押信息"""
@@ -9513,12 +9583,15 @@ class NodeRPCService:
                 "delegatedFrom": [],
             }
         except Exception as e:
-            return {
+            return self._rpc_internal_error("dao_getStakingInfo", e, {
                 "userId": userId,
                 "stakedAmount": 0,
                 "votingPower": 0,
-                "error": "internal_error",
-            }
+                "lockedUntil": None,
+                "pendingRewards": 0,
+                "delegatedTo": None,
+                "delegatedFrom": [],
+            })
     
     # ========================================
     # Phase 10: 主网上线准备接口实现
@@ -9763,11 +9836,15 @@ class NodeRPCService:
                         "successRate": 0,
                     }
         except Exception as e:
-            return {
+            return self._rpc_internal_error("load_test_getResults", e, {
                 "testId": testId,
                 "status": "error",
-                "error": "internal_error",
-            }
+                "totalRequests": 0,
+                "successRate": 0,
+                "avgLatency": 0,
+                "p99Latency": 0,
+                "throughput": 0,
+            })
     
     def _load_test_get_metrics(self, **kwargs) -> Dict:
         """获取性能指标"""
@@ -9892,12 +9969,12 @@ class NodeRPCService:
                 "relatedAddresses": [],
             }
         except Exception as e:
-            return {
+            return self._rpc_internal_error("security_checkSybil", e, {
                 "isSybil": False,
                 "clusterSize": 0,
                 "confidence": 0,
-                "error": "internal_error"
-            }
+                "relatedAddresses": [],
+            })
     
     # === 智能合约审计方法 ===
     
@@ -9940,11 +10017,15 @@ class NodeRPCService:
                     "recommendations": [],
                 }
         except Exception as e:
-            return {
+            return self._rpc_internal_error("audit_getReport", e, {
                 "auditId": auditId,
                 "status": "error",
-                "error": "internal_error",
-            }
+                "vulnerabilities": [],
+                "riskLevel": "unknown",
+                "recommendations": [],
+                "score": 0,
+                "passed": False,
+            })
     
     def _audit_auto_settle(self, taskId: str, minerId: str, amount: int, **kwargs) -> Dict:
         """自动结算"""
@@ -9989,11 +10070,10 @@ class NodeRPCService:
                 "totalCount": len(history),
             }
         except Exception as e:
-            return {
+            return self._rpc_internal_error("audit_getSettlementHistory", e, {
                 "settlements": [],
                 "totalCount": 0,
-                "error": "internal_error",
-            }
+            })
     
     # === 收益追踪方法 ===
     
@@ -10036,12 +10116,14 @@ class NodeRPCService:
                     "trend": "new",
                 }
         except Exception as e:
-            return {
+            return self._rpc_internal_error("revenue_getMinerStats", e, {
                 "minerId": minerId,
                 "period": period,
                 "totalEarnings": 0,
-                "error": "internal_error",
-            }
+                "taskCount": 0,
+                "avgEarningPerTask": 0,
+                "trend": "unknown",
+            })
     
     def _revenue_get_leaderboard(self, limit: int = 10, period: str = "day", **kwargs) -> Dict:
         """获取收益排行"""
@@ -10081,12 +10163,13 @@ class NodeRPCService:
                     "message": "No forecast data available",
                 }
         except Exception as e:
-            return {
+            return self._rpc_internal_error("revenue_getForecast", e, {
                 "minerId": minerId,
                 "forecastDays": days,
                 "predictedEarnings": 0,
-                "error": "internal_error",
-            }
+                "confidence": 0,
+                "factors": [],
+            })
     
     # === 主网监控方法 ===
     
@@ -10220,7 +10303,8 @@ class NodeRPCService:
                     })
             
             return {"sectors": sectors, "total": len(sectors)}
-        except Exception:
+        except Exception as e:
+            self._rpc_log_exception("frontend_miner_getSectorList", e)
             # SectorCoinType 不可用时，使用真实板块名
             return {
                 "sectors": [
@@ -10263,7 +10347,8 @@ class NodeRPCService:
                         "balance": bal.balance,
                         "percentage": 0,
                     }
-            except Exception:
+            except Exception as e:
+                self._rpc_log_exception("frontend_dashboard_getSectorDistribution", e)
                 pass
         
         # 返回默认分布（使用真实板块名）
@@ -10316,7 +10401,8 @@ class NodeRPCService:
                 if isinstance(tee_attestation, str):
                     try:
                         tee_attestation = json.loads(tee_attestation)
-                    except Exception:
+                    except Exception as e:
+                        self._rpc_log_exception("frontend_exchange_createOrder", e)
                         tee_attestation = {}
 
                 buyer_address = kwargs.get("buyerAddress", kwargs.get("buyer_address", self.node_id or "anonymous"))
@@ -10388,7 +10474,8 @@ class NodeRPCService:
                     "size": asset.get("size", 0),
                     "replicas": asset.get("replicas", 0),
                 }
-        except Exception:
+        except Exception as e:
+            self._rpc_log_exception("frontend_data_lifecycle_getStatus", e)
             pass
         return {
             "dataId": dataId,

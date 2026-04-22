@@ -27,3 +27,4 @@ jobs:
       - name: Run security regression tests
         run: |
           python -m pytest tests/test_security_regression_access.py -q
+          python -m pytest tests/test_security_baseline_enforcement.py -q

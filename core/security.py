@@ -22,6 +22,33 @@ from typing import Dict, Optional, Tuple
 from pathlib import Path
 
 
+# ============== 运行环境判定 ==============
+
+def get_runtime_environment() -> str:
+    """统一运行环境判定。
+
+    优先级:
+    1) APP_ENV / MAINCOIN_ENV / POUW_ENV
+    2) MAINCOIN_PRODUCTION=true 视为 production
+    3) 默认 development
+    """
+    for key in ("APP_ENV", "MAINCOIN_ENV", "POUW_ENV"):
+        value = os.environ.get(key, "").strip().lower()
+        if value:
+            return value
+
+    production_flag = os.environ.get("MAINCOIN_PRODUCTION", "").strip().lower()
+    if production_flag in ("1", "true", "yes", "on"):
+        return "production"
+
+    return "development"
+
+
+def is_production_mode() -> bool:
+    """是否处于生产模式。"""
+    return get_runtime_environment() in ("production", "prod", "mainnet")
+
+
 # ============== TLS 证书管理 ==============
 
 def generate_self_signed_cert(cert_dir: str) -> Tuple[str, str]:
@@ -126,14 +153,19 @@ def create_ssl_context(cert_path: str, key_path: str, server: bool = True) -> Op
             ctx.check_hostname = True
             ctx.verify_mode = ssl.CERT_REQUIRED
         else:
-            # H-1 fix: P2P 自签名场景——身份认证由应用层 ECDSA 挑战应答保证（S-2 fix）
-            # TLS 层仅提供传输加密，明确不确认证服务器证书
+            if is_production_mode():
+                raise RuntimeError(
+                    "生产环境必须配置 MAINCOIN_CA_CERT 且启用证书校验，"
+                    "禁止 TLS 客户端使用 CERT_NONE。"
+                )
+
+            # 开发环境允许降级，但明确告警。
             ctx.check_hostname = False
             ctx.verify_mode = ssl.CERT_NONE
             import logging
             logging.getLogger(__name__).warning(
-                "TLS 客户端未配置 CA 证书 (MAINCOIN_CA_CERT)，传输加密已启用，"
-                "身份认证由应用层 ECDSA 挑战应答保证。生产环境建议配置 CA 证书。"
+                "开发环境: 未配置 CA 证书 (MAINCOIN_CA_CERT)，"
+                "TLS 客户端已降级为 CERT_NONE。"
             )
     
     # 优先 TLS 1.3，不支持时回退到 1.2
