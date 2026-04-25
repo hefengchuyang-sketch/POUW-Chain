@@ -4,6 +4,10 @@
 
 An innovative decentralized blockchain platform that transforms real computation tasks (AI inference, video rendering, scientific computing) into a consensus mechanism.
 
+## Project Visual Preview
+
+![POUW-Chain Project Overview](docs/images/pouw-chain-banner.png)
+
 [![Version](https://img.shields.io/badge/version-2.0.0-blue.svg)](https://github.com/hefengchuyang-sketch/POUW-Chain)
 [![Python](https://img.shields.io/badge/python-3.9+-green.svg)](https://python.org)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
@@ -12,6 +16,7 @@ An innovative decentralized blockchain platform that transforms real computation
 
 ## Table of Contents
 
+- [Project Visual Preview](#project-visual-preview)
 - [Project Thesis](#project-thesis)
 - [System Design Philosophy Map](#system-design-philosophy-map)
 - [Privacy-First Compute Bank Thesis](#privacy-first-compute-bank-thesis)

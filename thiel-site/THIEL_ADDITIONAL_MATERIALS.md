@@ -1,0 +1,18 @@
+# POUW-Chain — Additional Materials
+
+POUW-Chain is a verifiable compute network for AI and scientific workloads. The core idea is simple: if computation already consumes real resources, it should generate useful output and be auditable, instead of being reduced to meaningless hash races.
+
+I started this project from a practical problem I kept facing. I needed more compute for real research tasks, but external rental options often gave weak guarantees around delivery quality and data accountability. At the same time, many small teams had underused hardware that was not being converted into reliable supply. POUW-Chain is my attempt to close that gap.
+
+Technically, the project combines useful-work consensus with an S-Box oriented path and a support channel for classic PoUW. In the current implementation, the network can run under sbox_primary, mixed, sbox_only, or pouw_only strategies, and the default profile is sbox_primary. The protocol already includes dispute and arbitration logic, encrypted transport, and settlement pathways so execution quality can be traced rather than assumed.
+
+Today the project is in an R&D-to-validation stage. The full local flow is implemented from task submission to execution and settlement visualization, and core behaviors are testable in the repository. The next milestone is not adding more features, but validating reliability with real workload scenarios across heterogeneous hardware and longer observation windows.
+
+I am applying to Thiel Fellowship because I want to spend my highest-energy years on hard, creative infrastructure problems where there is no playbook. This is exactly the kind of work I enjoy: high uncertainty, high technical depth, and direct responsibility from idea to working system.
+
+Industry category: AI Infrastructure / Developer Tools (with Blockchain / Decentralized Compute as the protocol layer).
+
+Links:
+Project Repository: https://github.com/hefengchuyang-sketch/POUW-Chain
+Project Site: https://hefengchuyang-sketch.github.io/POUW-Chain/
+Contact: yuhanliu050128@gmail.com
