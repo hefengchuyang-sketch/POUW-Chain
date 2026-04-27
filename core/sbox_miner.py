@@ -71,6 +71,9 @@ class SBoxMiningParams:
     genetic_iterations: int = 100
     genetic_population: int = 10
     use_genetic: bool = True
+    # 确定性遗传优化（降低方差、方便复现实验）
+    deterministic_genetic: bool = True
+    deterministic_genetic_salt: str = ""
 
     # Score 阈值范围
     min_score_threshold: float = 0.30
@@ -385,12 +388,24 @@ class SBoxSectorMiner:
 
             # 2. 遗传优化 (可选)
             if self.params.use_genetic:
+                deterministic_seed = None
+                if self.params.deterministic_genetic:
+                    seed_material = (
+                        f"{self.miner_id}|{self.sector}|{block_height}|"
+                        f"{attempt}|{prev_hash}|{self.params.deterministic_genetic_salt}"
+                    )
+                    deterministic_seed = int.from_bytes(
+                        hashlib.sha256(seed_material.encode("utf-8")).digest()[:8],
+                        "big",
+                    )
+
                 sbox, metrics = genetic_optimize(
                     initial_sbox=sbox,
                     iterations=self.params.genetic_iterations,
                     population_size=self.params.genetic_population,
                     weights=weights,
                     target_score=threshold,
+                    deterministic_seed=deterministic_seed,
                 )
             else:
                 metrics = compute_sbox_score(sbox, weights)

@@ -31,6 +31,7 @@ import threading
 import random
 import base64
 import hmac as _hmac
+import secrets
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +91,47 @@ class SettlementType(Enum):
     MAIN_COIN = "main_coin"       # 跨板块：主币结算
 
 
+@dataclass
+class Reputation:
+    """Beta 分布信誉模型。"""
+    alpha: float = 1.0
+    beta: float = 1.0
+
+    def update(self, success: bool):
+        if success:
+            self.alpha += 1.0
+        else:
+            self.beta += 1.0
+
+    def decay(self, factor: float = 0.99):
+        self.alpha = max(1.0, self.alpha * factor)
+        self.beta = max(1.0, self.beta * factor)
+
+    @property
+    def mean(self) -> float:
+        total = self.alpha + self.beta
+        return self.alpha / total if total > 0 else 0.5
+
+    @property
+    def uncertainty(self) -> float:
+        total = self.alpha + self.beta
+        return 1.0 / total if total > 0 else 1.0
+
+    @property
+    def score(self) -> float:
+        return self.mean - 1.5 * self.uncertainty
+
+
+@dataclass
+class ExecutionResult:
+    """执行层结果结构（兼容现有 result_hash 管线）。"""
+    task_id: str
+    node_id: str
+    output: str
+    timestamp: float = field(default_factory=time.time)
+    partial_hash: str = ""
+
+
 # ============== 数据结构 ==============
 
 @dataclass
@@ -101,6 +143,9 @@ class MinerNode:
     gpu_model: str                # GPU 型号
     gpu_memory: float             # 显存 (GB)
     compute_power: float          # 算力 (TFLOPs)
+    bandwidth: float = 1.0        # 网络带宽 (相对值)
+    latency: float = 0.0          # 网络延迟惩罚项
+    stake: float = 0.0            # 节点质押
     
     # 状态
     status: MinerStatus = MinerStatus.OFFLINE
@@ -115,6 +160,8 @@ class MinerNode:
     pouw_score: float = 1.0       # POUW 客观评分
     user_rating: float = 5.0      # 用户评分 (1-5)
     combined_score: float = 1.0   # 综合评分
+    rep_alpha: float = 1.0        # Beta reputation α
+    rep_beta: float = 1.0         # Beta reputation β
     
     # 统计
     tasks_completed: int = 0
@@ -134,6 +181,9 @@ class MinerNode:
             "gpu_model": self.gpu_model,
             "gpu_memory": self.gpu_memory,
             "compute_power": self.compute_power,
+            "bandwidth": self.bandwidth,
+            "latency": self.latency,
+            "stake": self.stake,
             "status": self.status.value,
             "mode": self.mode.value,
             "current_task_id": self.current_task_id,
@@ -142,6 +192,8 @@ class MinerNode:
             "pouw_score": self.pouw_score,
             "user_rating": self.user_rating,
             "combined_score": self.combined_score,
+            "rep_alpha": self.rep_alpha,
+            "rep_beta": self.rep_beta,
             "tasks_completed": self.tasks_completed,
             "tasks_failed": self.tasks_failed,
             "total_earnings": self.total_earnings,
@@ -159,6 +211,9 @@ class MinerNode:
             gpu_model=data.get('gpu_model', 'Unknown'),
             gpu_memory=data.get('gpu_memory', 0),
             compute_power=data.get('compute_power', 0),
+            bandwidth=data.get('bandwidth', 1.0),
+            latency=data.get('latency', 0.0),
+            stake=data.get('stake', 0.0),
             status=MinerStatus(data.get('status', 'offline')),
             mode=MinerMode(data.get('mode', 'voluntary')),
             current_task_id=data.get('current_task_id'),
@@ -167,6 +222,8 @@ class MinerNode:
             pouw_score=data.get('pouw_score', 1.0),
             user_rating=data.get('user_rating', 5.0),
             combined_score=data.get('combined_score', 1.0),
+            rep_alpha=data.get('rep_alpha', 1.0),
+            rep_beta=data.get('rep_beta', 1.0),
             tasks_completed=data.get('tasks_completed', 0),
             tasks_failed=data.get('tasks_failed', 0),
             total_earnings=data.get('total_earnings', 0.0),
@@ -184,6 +241,33 @@ class MinerNode:
         # 综合评分
         self.combined_score = pouw_weight * pouw_normalized + user_weight * user_normalized
 
+    @property
+    def reputation_mean(self) -> float:
+        rep = Reputation(self.rep_alpha, self.rep_beta)
+        return rep.mean
+
+    @property
+    def reputation_uncertainty(self) -> float:
+        rep = Reputation(self.rep_alpha, self.rep_beta)
+        return rep.uncertainty
+
+    @property
+    def reputation_score(self) -> float:
+        rep = Reputation(self.rep_alpha, self.rep_beta)
+        return rep.score
+
+    def update_reputation(self, success: bool):
+        rep = Reputation(self.rep_alpha, self.rep_beta)
+        rep.update(success)
+        self.rep_alpha = rep.alpha
+        self.rep_beta = rep.beta
+
+    def decay_reputation(self, factor: float = 0.99):
+        rep = Reputation(self.rep_alpha, self.rep_beta)
+        rep.decay(factor)
+        self.rep_alpha = rep.alpha
+        self.rep_beta = rep.beta
+
 
 @dataclass
 class ComputeTask:
@@ -196,6 +280,13 @@ class ComputeTask:
     task_type: str                # 任务类型
     task_data: str                # 任务数据
     sector: str                   # 目标板块
+    payload: Any = None
+    security_tier: int = 0
+    verification_mode: str = "none"   # none | sampling | consensus
+    random_seed: int = 0
+    compute_required: float = 1.0
+    memory_required: float = 1.0
+    deadline: float = 0.0
     
     # 分配
     assigned_miners: List[str] = field(default_factory=list)  # 分配的矿工
@@ -203,6 +294,7 @@ class ComputeTask:
     
     # 结果
     results: Dict[str, str] = field(default_factory=dict)  # miner_id -> result_hash
+    execution_results: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     final_result: Optional[str] = None
     
     # 状态
@@ -241,9 +333,17 @@ class ComputeTask:
             "task_type": self.task_type,
             "task_data": self.task_data,
             "sector": self.sector,
+            "payload": self.payload,
+            "security_tier": self.security_tier,
+            "verification_mode": self.verification_mode,
+            "random_seed": self.random_seed,
+            "compute_required": self.compute_required,
+            "memory_required": self.memory_required,
+            "deadline": self.deadline,
             "assigned_miners": self.assigned_miners,
             "redundancy": self.redundancy,
             "results": self.results,
+            "execution_results": self.execution_results,
             "final_result": self.final_result,
             "status": self.status.value,
             "settlement_type": self.settlement_type.value,
@@ -358,7 +458,7 @@ class ComputeScheduler:
     """算力调度器 - 支持强制/自主/混合模式"""
     
     # 配置
-    DEFAULT_REDUNDANCY = 1        # 默认执行节点数（盲模式下单矿工即可）
+    DEFAULT_REDUNDANCY = 2        # 默认执行节点数（传统模式强制双节点）
     MAX_REDUNDANCY = 5            # 最大冗余节点数（向后兼容）
     TASK_TIMEOUT = 3600           # 默认任务超时（秒），可被 duration_seconds 覆盖
     MAX_TASK_DURATION = 720 * 3600 # 最大任务时长（30 天 = 2592000 秒）
@@ -366,6 +466,21 @@ class ComputeScheduler:
     HEARTBEAT_EXTEND_GRACE = 120  # 心跳延展宽限期（秒）：矿工存活时额外延长超时
     WATCHDOG_INTERVAL = 30        # 守护巡检间隔（秒）
     MAX_TASK_RETRIES = 3          # 任务最大重试次数
+    HIGH_VALUE_THRESHOLD = 10.0
+    LOW_REP_THRESHOLD = 0.35
+    CONSENSUS_VARIANCE_THRESHOLD = 0.0
+    SAMPLING_RATIO = 0.2
+    MIN_SAMPLING_POINTS = 1
+    DECAY_INTERVAL_SECONDS = 300
+    REPUTATION_DECAY_FACTOR = 0.99
+    SLASH_RATIO = 0.3
+
+    TIER_CONFIG = {
+        0: {"k": 1, "verify": "none", "cost": 1.0},
+        1: {"k": 2, "verify": "consensus", "cost": 1.2},
+        2: {"k": 2, "verify": "sampling", "cost": 1.4},
+        3: {"k": 3, "verify": "consensus", "cost": 1.6},
+    }
     
     # 评分权重（治理层可调整）
     POUW_WEIGHT = 0.6             # POUW 评分权重
@@ -390,6 +505,7 @@ class ComputeScheduler:
         
         # 调度锁
         self._lock = threading.Lock()
+        self._last_decay_at = 0.0
         
         # 盲任务引擎（矿工无感知的算力租用系统）
         self.blind_engine = BlindTaskEngine()
@@ -610,6 +726,7 @@ class ComputeScheduler:
             try:
                 self._handle_timed_out_tasks()
                 self._handle_offline_miners()
+                self._maybe_decay_reputation()
             except Exception as e:
                 # 守护线程不能崩溃
                 pass
@@ -658,7 +775,7 @@ class ComputeScheduler:
                 
                 # 立即尝试重新调度
                 with self._lock:
-                    if self.schedule_mode == ScheduleMode.BLIND:
+                    if self.schedule_mode == ScheduleMode.BLIND and task.redundancy == 1:
                         self._create_task_blind(task)
                     else:
                         self._create_task_legacy(task)
@@ -707,6 +824,41 @@ class ComputeScheduler:
                 else:
                     miner.status = MinerStatus.OFFLINE
                 self.update_miner(miner)
+
+    def reassign(self, task_id: str) -> Tuple[bool, str]:
+        """v2 公开接口：任务重调度。"""
+        task = self.get_task(task_id)
+        if not task:
+            return False, "任务不存在"
+
+        self._release_task_miners(task)
+        task.status = TaskStatus.PENDING
+        task.assigned_miners = []
+        task.results = {}
+        task.execution_results = {}
+        task.retry_count += 1
+        task.timeout_at = 0
+        self._save_task(task)
+
+        with self._lock:
+            if self.schedule_mode == ScheduleMode.BLIND and task.redundancy == 1:
+                return self._create_task_blind(task)
+            return self._create_task_legacy(task)
+
+    def monitor_execution(self, task_id: str) -> Tuple[bool, str]:
+        """v2 公开接口：监控任务是否超时/失败并触发重调度。"""
+        task = self.get_task(task_id)
+        if not task:
+            return False, "任务不存在"
+
+        now = time.time()
+        if task.status in (TaskStatus.FAILED, TaskStatus.TIMEOUT):
+            return self.reassign(task_id)
+        if task.timeout_at > 0 and now >= task.timeout_at:
+            task.status = TaskStatus.TIMEOUT
+            self._save_task(task)
+            return self.reassign(task_id)
+        return True, "任务执行正常"
     
     def close(self):
         """停止守护线程"""
@@ -764,6 +916,123 @@ class ComputeScheduler:
         
         self._save_task(task)
         return True, f"进度已更新: {progress*100:.1f}%"
+
+    def _resolve_task_profile(self, task: ComputeTask):
+        """统一计算 tier/redundancy/验证模式，保证高价值任务不可无验证。"""
+        # 防止未初始化随机性导致可预测采样
+        if task.random_seed == 0:
+            task.random_seed = secrets.randbits(64)
+
+        # 规则1: 高价值任务最低 Tier 1
+        if task.total_payment > self.HIGH_VALUE_THRESHOLD:
+            task.security_tier = max(task.security_tier, 1)
+
+        # 规则2: 低信誉买家最低 Tier 1（从 fee_breakdown 可选注入）
+        buyer_rep = float(task.fee_breakdown.get("buyer_reputation", 1.0))
+        if buyer_rep < self.LOW_REP_THRESHOLD:
+            task.security_tier = max(task.security_tier, 1)
+
+        task.security_tier = min(max(int(task.security_tier), 0), 3)
+        cfg = self.TIER_CONFIG[task.security_tier]
+        task.verification_mode = cfg["verify"]
+        task.redundancy = int(cfg["k"])
+
+        # 兼容旧字段 redundancy（只允许提高，不允许降低安全配置）
+        if task.fee_breakdown.get("requested_redundancy"):
+            requested = int(task.fee_breakdown["requested_redundancy"])
+            task.redundancy = max(task.redundancy, requested)
+
+        # BLIND 模式仍保留单节点，但在高 tier 强制回退到传统多节点
+        if self.schedule_mode == ScheduleMode.BLIND and task.security_tier == 0:
+            task.redundancy = 1
+
+    def _compute_fee_with_tier(self, task: ComputeTask):
+        base_fee = float(task.fee_breakdown.get("base_fee", task.total_payment))
+        cfg = self.TIER_CONFIG.get(task.security_tier, self.TIER_CONFIG[0])
+        task.fee_breakdown["tier_multiplier"] = cfg["cost"]
+        task.fee_breakdown["tier_fee"] = base_fee * cfg["cost"]
+
+    def _match_score(self, miner: MinerNode, task: ComputeTask) -> float:
+        compute_denom = max(task.compute_required, 1e-9)
+        memory_denom = max(task.memory_required, 1e-9)
+        compute_score = miner.compute_power / compute_denom
+        memory_score = miner.gpu_memory / memory_denom
+        reliability = miner.reputation_mean - 1.5 * miner.reputation_uncertainty
+        return (
+            0.4 * compute_score +
+            0.3 * memory_score +
+            0.3 * reliability -
+            0.2 * miner.latency
+        )
+
+    def _generate_sampling_indices(self, seed: int, size: int) -> List[int]:
+        if size <= 0:
+            return []
+        rng = random.Random(seed)
+        k = max(self.MIN_SAMPLING_POINTS, int(size * self.SAMPLING_RATIO))
+        k = min(k, size)
+        return rng.sample(range(size), k=k)
+
+    def _verify_sampling(self, outputs: List[str], seed: int) -> bool:
+        if len(outputs) < 2:
+            return False
+        sample_source = outputs[0]
+        indices = self._generate_sampling_indices(seed, len(sample_source))
+        if not indices:
+            return False
+        baseline = "".join(sample_source[i] for i in indices)
+        for out in outputs[1:]:
+            if len(out) != len(sample_source):
+                return False
+            if "".join(out[i] for i in indices) != baseline:
+                return False
+        return True
+
+    def _consensus_variance(self, outputs: List[str]) -> float:
+        # 字符串结果下采用离散一致性度量：1 - max_freq / n
+        n = len(outputs)
+        if n <= 1:
+            return 1.0
+        counts: Dict[str, int] = {}
+        for out in outputs:
+            counts[out] = counts.get(out, 0) + 1
+        max_freq = max(counts.values())
+        return 1.0 - (max_freq / n)
+
+    def _slash_miner(self, miner_id: str, amount: float, reason: str):
+        miner = self.get_miner(miner_id)
+        if not miner:
+            return
+        miner.stake = max(0.0, miner.stake - max(amount, 0.0))
+        miner.tasks_failed += 1
+        miner.update_reputation(False)
+        miner.update_combined_score(self.POUW_WEIGHT, self.USER_RATING_WEIGHT)
+        self.update_miner(miner)
+
+    def _reward_dispute_winner(self, miner_id: str, bonus: float):
+        miner = self.get_miner(miner_id)
+        if not miner:
+            return
+        miner.total_earnings += max(bonus, 0.0)
+        miner.update_reputation(True)
+        miner.update_combined_score(self.POUW_WEIGHT, self.USER_RATING_WEIGHT)
+        self.update_miner(miner)
+
+    def _maybe_decay_reputation(self):
+        now = time.time()
+        if self._last_decay_at and now - self._last_decay_at < self.DECAY_INTERVAL_SECONDS:
+            return
+
+        with self._conn() as conn:
+            rows = conn.execute("SELECT miner_data FROM miners").fetchall()
+
+        for row in rows:
+            miner = MinerNode.from_dict(json.loads(row['miner_data']))
+            miner.decay_reputation(self.REPUTATION_DECAY_FACTOR)
+            miner.update_combined_score(self.POUW_WEIGHT, self.USER_RATING_WEIGHT)
+            self.update_miner(miner)
+
+        self._last_decay_at = now
     
     # ============== 任务调度 ==============
     
@@ -783,6 +1052,11 @@ class ComputeScheduler:
             valid, err = TaskDataValidator.validate(task)
             if not valid:
                 return False, f"任务数据验证失败: {err}"
+
+            # v2 任务约束与验证配置
+            task.fee_breakdown["requested_redundancy"] = required_miners
+            self._resolve_task_profile(task)
+            self._compute_fee_with_tier(task)
             
             # 记录任务数据哈希（用于后续完整性审计）
             task.fee_breakdown["task_data_hash"] = TaskDataValidator.compute_task_hash(task.task_data)
@@ -795,11 +1069,13 @@ class ComputeScheduler:
             
             if self.schedule_mode == ScheduleMode.BLIND:
                 # ---- 盲调度模式：单矿工 + 陷阱验证 ----
-                task.redundancy = 1  # 不浪费算力
-                return self._create_task_blind(task)
+                if task.redundancy == 1:
+                    return self._create_task_blind(task)
+                # 高安全级任务回退到传统多节点验证
+                return self._create_task_legacy(task)
             else:
                 # ---- 传统模式：多矿工冗余 ----
-                task.redundancy = min(required_miners, self.MAX_REDUNDANCY)
+                task.redundancy = min(task.redundancy, self.MAX_REDUNDANCY)
                 return self._create_task_legacy(task)
 
     def _create_task_blind(self, task: ComputeTask) -> Tuple[bool, str]:
@@ -824,6 +1100,8 @@ class ComputeScheduler:
 
         # 获取所有可用矿工（包括正在挖矿的 - 他们不知道会切换到付费任务）
         available = self._get_available_miners(sector, min_memory_gb=min_memory_gb)
+        if not available:
+            return False, "当前无可用矿工可执行盲任务"
         # 优先选择高信任度矿工（陷阱开销更低）
         def blind_sort_key(m):
             trust = self.blind_engine.get_trust_profile(m.miner_id)
@@ -907,6 +1185,14 @@ class ComputeScheduler:
             sector, mode=MinerMode.VOLUNTARY, min_memory_gb=min_memory_gb)
         forced_miners = self._get_available_miners(
             sector, mode=MinerMode.FORCED, min_memory_gb=min_memory_gb)
+        all_miners = voluntary_miners + forced_miners
+
+        # v2 调度评分：异构能力 + 信誉置信惩罚 + 延迟惩罚
+        ranked_all = sorted(
+            all_miners,
+            key=lambda m: self._match_score(m, task),
+            reverse=True,
+        )
 
         if self.schedule_mode == ScheduleMode.VOLUNTARY:
             # 自主模式：只用自主矿工
@@ -914,18 +1200,29 @@ class ComputeScheduler:
             
         elif self.schedule_mode == ScheduleMode.FORCED:
             # 强制模式：系统全权调度
-            all_miners = voluntary_miners + forced_miners
-            selected = self._select_best_miners(all_miners, required)
+            selected = [m.miner_id for m in ranked_all[:required]]
             
         elif self.schedule_mode == ScheduleMode.HYBRID:
             # 混合模式：优先自主，不足时强制
-            selected = self._select_best_miners(voluntary_miners, required)
+            ranked_voluntary = sorted(
+                voluntary_miners,
+                key=lambda m: self._match_score(m, task),
+                reverse=True,
+            )
+            selected = [m.miner_id for m in ranked_voluntary[:required]]
             
             if len(selected) < required:
                 # 自主矿工不足，补充强制矿工
                 remaining = required - len(selected)
-                forced_selected = self._select_best_miners(forced_miners, remaining)
+                ranked_forced = sorted(
+                    forced_miners,
+                    key=lambda m: self._match_score(m, task),
+                    reverse=True,
+                )
+                forced_selected = [m.miner_id for m in ranked_forced[:remaining]]
                 selected.extend(forced_selected)
+        else:
+            selected = [m.miner_id for m in ranked_all[:required]]
         
         return selected
     
@@ -1145,6 +1442,12 @@ class ComputeScheduler:
         
         # 记录结果
         task.results[miner_id] = result_hash
+        task.execution_results[miner_id] = ExecutionResult(
+            task_id=task_id,
+            node_id=miner_id,
+            output=result_hash,
+            partial_hash=hashlib.sha256(result_hash.encode()).hexdigest()[:16],
+        ).__dict__
         
         if self.schedule_mode == ScheduleMode.BLIND:
             # ---- 盲调度模式：直接进入盲验证 ----
@@ -1239,41 +1542,134 @@ class ComputeScheduler:
         self._save_task(task)
     
     def _verify_results_legacy(self, task: ComputeTask):
-        """传统多数派共识验证（向后兼容）"""
-        results = list(task.results.values())
-        
-        result_counts = {}
-        for r in results:
-            result_counts[r] = result_counts.get(r, 0) + 1
-        
+        """v2 验证层（none/consensus/sampling + 仲裁）。"""
+        outputs = list(task.results.values())
+        if not outputs:
+            task.status = TaskStatus.FAILED
+            task.fee_breakdown["verification_fail_reason"] = "empty_results"
+            self._save_task(task)
+            return
+
+        result_counts: Dict[str, int] = {}
+        for out in outputs:
+            result_counts[out] = result_counts.get(out, 0) + 1
+
         majority_result = max(result_counts, key=result_counts.get)
         majority_count = result_counts[majority_result]
-        
-        if majority_count >= (task.redundancy // 2) + 1:
+        verification_ok = False
+        verification_mode = (task.verification_mode or "consensus").lower()
+
+        if verification_mode == "none":
+            verification_ok = True
+        elif verification_mode == "sampling":
+            verification_ok = self._verify_sampling(outputs, task.random_seed)
+        else:
+            variance = self._consensus_variance(outputs)
+            threshold = float(task.fee_breakdown.get(
+                "consensus_variance_threshold", self.CONSENSUS_VARIANCE_THRESHOLD
+            ))
+            verification_ok = variance <= threshold and majority_count >= (task.redundancy // 2) + 1
+
+        if verification_ok:
             task.final_result = majority_result
             task.status = TaskStatus.COMPLETED
             task.completed_at = time.time()
-            
-            for miner_id, result in task.results.items():
+
+            # 经济分配：k=1 全额给执行者；k>=2 按 70/30 给执行者和验证者
+            correct_miners = [mid for mid, result in task.results.items() if result == majority_result]
+            verifier_miners = [mid for mid, result in task.results.items() if result != majority_result]
+            if task.redundancy == 1:
+                task.fee_breakdown["reward_scheme"] = "single_executor_full_reward"
+            elif task.redundancy >= 2:
+                task.fee_breakdown["reward_scheme"] = "executor_70_verifier_30"
+                task.fee_breakdown["executor_share_ratio"] = 0.7
+                task.fee_breakdown["verifier_share_ratio"] = 0.3
+
+            for miner_id in task.assigned_miners:
                 miner = self.get_miner(miner_id)
-                if miner:
-                    if result == majority_result:
-                        miner.pouw_score = min(miner.pouw_score + 0.01, 2.0)
-                        miner.tasks_completed += 1
-                    else:
-                        miner.pouw_score = max(miner.pouw_score - 0.05, 0.1)
-                        miner.tasks_failed += 1
-                    
-                    miner.update_combined_score(self.POUW_WEIGHT, self.USER_RATING_WEIGHT)
-                    miner.current_task_id = None
-                    miner.status = MinerStatus.ONLINE
-                    self.update_miner(miner)
-            
+                if not miner:
+                    continue
+                if miner_id in correct_miners:
+                    miner.pouw_score = min(miner.pouw_score + 0.01, 2.0)
+                    miner.tasks_completed += 1
+                    miner.update_reputation(True)
+                else:
+                    miner.pouw_score = max(miner.pouw_score - 0.05, 0.1)
+                    miner.tasks_failed += 1
+                    miner.update_reputation(False)
+
+                miner.update_combined_score(self.POUW_WEIGHT, self.USER_RATING_WEIGHT)
+                miner.current_task_id = None
+                miner.status = MinerStatus.ONLINE
+                self.update_miner(miner)
+
             self._settle_task(task)
-        else:
-            task.status = TaskStatus.FAILED
-        
+            self._save_task(task)
+            return
+
+        # 验证失败：触发仲裁并执行经济惩罚
+        task.fee_breakdown["verification_failed"] = True
+        task.fee_breakdown["verification_mode"] = verification_mode
+        resolved = self._resolve_dispute(task, majority_result)
+        if not resolved:
+            # 仲裁无法完成时执行重调度
+            task.status = TaskStatus.PENDING
+            task.retry_count += 1
+            task.assigned_miners = []
+            task.results = {}
+            task.execution_results = {}
+            task.timeout_at = 0
         self._save_task(task)
+
+    def _resolve_dispute(self, task: ComputeTask, majority_result: str) -> bool:
+        """争议仲裁：引入第三节点做多数裁决，失败则重调度。"""
+        # 选择不在已分配矿工中的仲裁节点
+        available = self._get_available_miners(task.sector, min_memory_gb=task.memory_required)
+        arbitrators = [m for m in available if m.miner_id not in task.assigned_miners]
+        arbitrators = sorted(arbitrators, key=lambda m: self._match_score(m, task), reverse=True)
+        if not arbitrators:
+            task.fee_breakdown["dispute_resolution"] = "no_arbitrator_available"
+            return False
+
+        arbiter = arbitrators[0]
+        # 当前版本无法在调度器内主动执行真实计算，采用密码学随机 tie-break challenge。
+        # 约束：不可预测随机，用 random_seed + 节点id 生成可审计仲裁输出。
+        arbitration_result = hashlib.sha256(
+            f"{task.random_seed}:{task.task_id}:{arbiter.miner_id}".encode()
+        ).hexdigest()
+
+        votes = list(task.results.values()) + [arbitration_result]
+        counts: Dict[str, int] = {}
+        for out in votes:
+            counts[out] = counts.get(out, 0) + 1
+        winner = max(counts, key=counts.get)
+
+        if counts[winner] < 2:
+            task.fee_breakdown["dispute_resolution"] = "unresolved"
+            return False
+
+        task.final_result = winner
+        task.status = TaskStatus.COMPLETED
+        task.completed_at = time.time()
+        task.fee_breakdown["dispute_resolution"] = "resolved_by_arbiter"
+        task.fee_breakdown["arbiter_node"] = arbiter.miner_id
+
+        for miner_id, result in task.results.items():
+            miner = self.get_miner(miner_id)
+            if not miner:
+                continue
+            if result == winner:
+                miner.update_reputation(True)
+                self._reward_dispute_winner(miner_id, float(task.fee_breakdown.get("dispute_bonus", 0.0)))
+            else:
+                slash_amount = miner.stake * self.SLASH_RATIO
+                self._slash_miner(miner_id, slash_amount, "verification_fail")
+            miner.current_task_id = None
+            miner.status = MinerStatus.ONLINE
+            self.update_miner(miner)
+
+        self._settle_task(task)
+        return True
     
     def _settle_task(self, task: ComputeTask):
         """任务结算（去中心化费用分配）
@@ -1302,20 +1698,39 @@ class ComputeScheduler:
             "total_fee": total_fee,
         })
         
-        # 按贡献分配（结果正确的矿工平分）
-        correct_miners = [mid for mid, result in task.results.items() 
+        # 按贡献分配（v2：支持 k=2 执行者/验证者分成）
+        correct_miners = [mid for mid, result in task.results.items()
                           if result == task.final_result]
-        
-        if correct_miners:
+        verifier_miners = [mid for mid, result in task.results.items()
+                           if result != task.final_result]
+
+        scheme = task.fee_breakdown.get("reward_scheme", "equal_split")
+        if scheme == "executor_70_verifier_30" and correct_miners:
+            executor_pool = distributable * 0.7
+            verifier_pool = distributable * 0.3
+            per_executor = executor_pool / len(correct_miners)
+            for miner_id in correct_miners:
+                task.miner_payments[miner_id] = task.miner_payments.get(miner_id, 0.0) + per_executor
+
+            if verifier_miners:
+                per_verifier = verifier_pool / len(verifier_miners)
+                for miner_id in verifier_miners:
+                    task.miner_payments[miner_id] = task.miner_payments.get(miner_id, 0.0) + per_verifier
+            elif correct_miners:
+                # 没有独立验证者时，剩余验证池返还给执行者
+                per_executor_bonus = verifier_pool / len(correct_miners)
+                for miner_id in correct_miners:
+                    task.miner_payments[miner_id] += per_executor_bonus
+        elif correct_miners:
             per_miner = distributable / len(correct_miners)
             for miner_id in correct_miners:
-                task.miner_payments[miner_id] = per_miner
-                
-                # 更新矿工收益
-                miner = self.get_miner(miner_id)
-                if miner:
-                    miner.total_earnings += per_miner
-                    self.update_miner(miner)
+                task.miner_payments[miner_id] = task.miner_payments.get(miner_id, 0.0) + per_miner
+
+        for miner_id, amount in task.miner_payments.items():
+            miner = self.get_miner(miner_id)
+            if miner:
+                miner.total_earnings += amount
+                self.update_miner(miner)
         
         # 链上交易通过共识层提交（结算记录先持久化，再由出块矿工打包）
         # 结算事件由 RPC 层的结算钩子（settlement_hook）触发链上交易创建：
@@ -1353,6 +1768,26 @@ class ComputeScheduler:
         self._save_task(task)
     
     # ============== 用户评分 ==============
+
+    def compute_fee(self, base_fee: float, tier: int) -> float:
+        tier = min(max(int(tier), 0), 3)
+        return float(base_fee) * float(self.TIER_CONFIG[tier]["cost"])
+
+    def distribute_reward(self, task_id: str) -> Tuple[bool, str]:
+        task = self.get_task(task_id)
+        if not task:
+            return False, "任务不存在"
+        if task.status != TaskStatus.COMPLETED:
+            return False, "任务尚未完成"
+        self._settle_task(task)
+        return True, "奖励分配完成"
+
+    def slash(self, miner_id: str, amount: float) -> Tuple[bool, str]:
+        miner = self.get_miner(miner_id)
+        if not miner:
+            return False, "矿工不存在"
+        self._slash_miner(miner_id, amount, "manual_slash")
+        return True, f"已对矿工 {miner_id} 执行惩罚 {amount:.6f}"
     
     def rate_miner(self, miner_id: str, rating: float, 
                    rating_fee: float = 0.001) -> Tuple[bool, str]:

@@ -17,10 +17,12 @@ sbox_engine.py - S-Box 密码学评分引擎与挖矿核心
 """
 
 import hashlib
+import os
 import secrets
 import time
 import json
 import math
+import random
 from dataclasses import dataclass, field
 from typing import List, Tuple, Dict, Optional, Any
 from copy import deepcopy
@@ -51,6 +53,17 @@ MIN_NONLINEARITY = 0
 MAX_DIFF_UNIFORMITY = 256     # 最差情况
 MIN_DIFF_UNIFORMITY = 2       # bent 函数理论极限
 IDEAL_AVALANCHE = SBOX_BITS / 2.0  # 4.0
+
+
+# ============== 可选加速器 (C 扩展等) ==============
+
+_SBOX_ACCEL_MAX_WALSH = None
+if os.getenv("POUW_SBOX_DISABLE_ACCEL", "false").strip().lower() != "true":
+    try:
+        from core import _sbox_accel  # type: ignore
+        _SBOX_ACCEL_MAX_WALSH = getattr(_sbox_accel, "max_walsh_spectrum", None)
+    except Exception:
+        _SBOX_ACCEL_MAX_WALSH = None
 
 
 # ============== Walsh-Hadamard 变换工具 ==============
@@ -98,6 +111,16 @@ def _walsh_hadamard_spectrum_fast(sbox: List[int]) -> List[int]:
     """
     n = SBOX_BITS
     size = 1 << n  # 256
+
+    # 优先走可选加速器，失败则自动回退到纯 Python 实现。
+    if callable(_SBOX_ACCEL_MAX_WALSH):
+        try:
+            accel_values = _SBOX_ACCEL_MAX_WALSH(sbox)
+            if isinstance(accel_values, (list, tuple)) and len(accel_values) == size:
+                return [int(v) for v in accel_values]
+        except Exception:
+            pass
+
     max_walsh_values = [0] * size
 
     for b in range(1, size):
@@ -326,10 +349,20 @@ def generate_random_sbox() -> List[int]:
     Returns:
         长度 256 的双射置换列表
     """
+    return generate_random_sbox_with_rng(secrets.SystemRandom())
+
+
+def generate_random_sbox_with_rng(rng: random.Random) -> List[int]:
+    """使用指定 RNG 生成随机 S-Box (双射置换)。
+
+    该接口用于测试/复现实验：
+    - 生产默认仍建议使用 secrets.SystemRandom()
+    - 在需要可复现结果时可注入 deterministic Random(seed)
+    """
     sbox = list(range(SBOX_SIZE))
-    # Fisher-Yates shuffle with cryptographic randomness
+    # Fisher-Yates shuffle
     for i in range(SBOX_SIZE - 1, 0, -1):
-        j = secrets.randbelow(i + 1)
+        j = rng.randrange(i + 1)
         sbox[i], sbox[j] = sbox[j], sbox[i]
     return sbox
 
@@ -373,11 +406,11 @@ def hex_to_sbox(hex_str: str) -> List[int]:
 
 # ============== 遗传算法优化 ==============
 
-def _crossover(parent1: List[int], parent2: List[int]) -> List[int]:
+def _crossover(parent1: List[int], parent2: List[int], rng: random.Random) -> List[int]:
     """有序交叉 (OX) 保持双射性。"""
     size = len(parent1)
-    start = secrets.randbelow(size)
-    end = start + secrets.randbelow(size - start)
+    start = rng.randrange(size)
+    end = start + rng.randrange(size - start)
 
     child = [-1] * size
     # 复制 parent1 的片段
@@ -397,13 +430,14 @@ def _crossover(parent1: List[int], parent2: List[int]) -> List[int]:
     return child
 
 
-def _mutate(sbox: List[int], mutation_rate: float = 0.02) -> List[int]:
+def _mutate(sbox: List[int], mutation_rate: float = 0.02, rng: Optional[random.Random] = None) -> List[int]:
     """变异：随机交换两个位置 (保持双射性)。"""
+    rng = rng or secrets.SystemRandom()
     result = list(sbox)
     n_swaps = max(1, int(SBOX_SIZE * mutation_rate))
     for _ in range(n_swaps):
-        i = secrets.randbelow(SBOX_SIZE)
-        j = secrets.randbelow(SBOX_SIZE)
+        i = rng.randrange(SBOX_SIZE)
+        j = rng.randrange(SBOX_SIZE)
         result[i], result[j] = result[j], result[i]
     return result
 
@@ -414,6 +448,7 @@ def genetic_optimize(
     population_size: int = 20,
     weights: Dict[str, float] = None,
     target_score: float = 0.85,
+    deterministic_seed: Optional[int] = None,
 ) -> Tuple[List[int], SBoxMetrics]:
     """遗传算法优化 S-Box。
 
@@ -423,6 +458,7 @@ def genetic_optimize(
         population_size: 种群大小
         weights: 评分权重
         target_score: 达到此分数提前终止
+        deterministic_seed: 可选固定随机种子，用于可复现实验/调试
 
     Returns:
         (best_sbox, best_metrics) 最优 S-Box 及其评分
@@ -430,12 +466,18 @@ def genetic_optimize(
     if weights is None:
         weights = dict(DEFAULT_SCORE_WEIGHTS)
 
+    rng: random.Random
+    if deterministic_seed is None:
+        rng = secrets.SystemRandom()
+    else:
+        rng = random.Random(deterministic_seed)
+
     # 初始化种群
     population = []
     if initial_sbox:
         population.append(list(initial_sbox))
     while len(population) < population_size:
-        population.append(generate_random_sbox())
+        population.append(generate_random_sbox_with_rng(rng))
 
     best_sbox = None
     best_metrics = None
@@ -463,10 +505,10 @@ def genetic_optimize(
         # 繁殖
         new_population = list(survivors)
         while len(new_population) < population_size:
-            p1 = survivors[secrets.randbelow(len(survivors))]
-            p2 = survivors[secrets.randbelow(len(survivors))]
-            child = _crossover(p1, p2)
-            child = _mutate(child)
+            p1 = survivors[rng.randrange(len(survivors))]
+            p2 = survivors[rng.randrange(len(survivors))]
+            child = _crossover(p1, p2, rng)
+            child = _mutate(child, rng=rng)
             new_population.append(child)
 
         population = new_population

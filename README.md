@@ -32,6 +32,7 @@ An innovative decentralized blockchain platform that transforms real computation
 - [Implemented Compensation & Protection Mechanisms](#implemented-compensation--protection-mechanisms)
 - [Implemented Capability Coverage Matrix](#implemented-capability-coverage-matrix)
 - [Documentation Hub](#documentation-hub)
+- [Tech Spec v2 Implementation](#tech-spec-v2-implementation)
 - [System Architecture](#system-architecture)
 - [Quick Start](#quick-start)
 - [Verification Checklist](#verification-checklist)
@@ -538,6 +539,22 @@ Use the role-based docs index as entry point:
 - [Security Baseline Checklist](docs/SECURITY_BASELINE_CHECKLIST.md)
 - [Codebase Review (2026-04-10)](docs/CODEBASE_REVIEW_2026-04-10.md)
 - [RPC Permission Baseline](docs/RPC_PERMISSION_BASELINE.md)
+- [Tech Spec v2 Implementation Notes](docs/TECH_SPEC_V2_IMPLEMENTATION.md)
+
+## Tech Spec v2 Implementation
+
+The v2 anti-adversarial upgrade is implemented in runnable form with backward compatibility.
+
+- Core implementation: `core/compute_scheduler.py`
+- Structured mapping: [docs/TECH_SPEC_V2_IMPLEMENTATION.md](docs/TECH_SPEC_V2_IMPLEMENTATION.md)
+
+Implemented highlights:
+
+- Task-layer tier constraints, verification mode, and unpredictability seed
+- Heterogeneous scheduling score with reliability uncertainty penalty
+- Verification layer with `none` / `consensus` / `sampling` and dispute fallback
+- Beta reputation update + periodic decay
+- Incentive hooks including tier fee multiplier and slash path
 
 Security regression quick check:
 
