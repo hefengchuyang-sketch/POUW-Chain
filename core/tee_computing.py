@@ -70,6 +70,22 @@ class VerificationStatus(Enum):
     DISPUTED = "disputed"
 
 
+class ChallengeStatus(Enum):
+    """挑战状态 - V1.0 核心"""
+    PENDING = "pending"
+    CHALLENGED = "challenged"
+    RESOLVED = "resolved"
+    EXPIRED = "expired"
+
+
+class ChallengeStatus(Enum):
+    """挑战状态 - V1.0 核心"""
+    PENDING = "pending"
+    CHALLENGED = "challenged"
+    RESOLVED = "resolved"
+    EXPIRED = "expired"
+
+
 class TEENodeStatus(Enum):
     """TEE 节点状态"""
     UNKNOWN = "unknown"
@@ -283,6 +299,129 @@ class VerificationResult:
     verification_time_ms: float = 0
 
 
+# ============== V1.0 核心数据结构 ==============
+
+@dataclass
+class ExecutionRoot:
+    """执行路径哈希绑定 - 防止任务/数据/代码被替换"""
+    task_id: str
+    code_hash: str          # model_code_hash
+    data_hash: str          # dataset_hash
+    params_hash: str       # hyperparams_hash
+    output_hash: str        # result_hash
+    root_hash: str = ""
+    timestamp: float = field(default_factory=time.time)
+
+    def compute(self) -> str:
+        """计算 ExecutionRoot = H(task_id || code_hash || data_hash || params_hash || output_hash)"""
+        data = f"{self.task_id}{self.code_hash}{self.data_hash}{self.params_hash}{self.output_hash}"
+        self.root_hash = hashlib.sha256(data.encode()).hexdigest()
+        return self.root_hash
+
+    @classmethod
+    def from_task(cls, task_id: str, code: bytes, data: bytes, params: bytes, output: bytes) -> 'ExecutionRoot':
+        return cls(
+            task_id=task_id,
+            code_hash=hashlib.sha256(code).hexdigest(),
+            data_hash=hashlib.sha256(data).hexdigest(),
+            params_hash=hashlib.sha256(params).hexdigest(),
+            output_hash=hashlib.sha256(output).hexdigest(),
+        )
+
+    def to_dict(self) -> Dict:
+        return {
+            "task_id": self.task_id,
+            "code_hash": self.code_hash,
+            "data_hash": self.data_hash,
+            "params_hash": self.params_hash,
+            "output_hash": self.output_hash,
+            "root_hash": self.root_hash,
+            "timestamp": self.timestamp,
+        }
+
+
+@dataclass
+class AttestationRecord:
+    """链上 Attestation Registry 记录结构 - V1.0"""
+    task_id: str
+    execution_root: str
+    miner_address: str
+    attestation_report_id: str
+    is_verified: bool = False
+    verified_at: float = 0
+    challenge_window_end: float = 0
+    status: str = "submitted"
+    created_at: float = field(default_factory=time.time)
+
+    def to_dict(self) -> Dict:
+        return {
+            "task_id": self.task_id,
+            "execution_root": self.execution_root,
+            "miner_address": self.miner_address,
+            "attestation_report_id": self.attestation_report_id,
+            "is_verified": self.is_verified,
+            "verified_at": self.verified_at,
+            "challenge_window_end": self.challenge_window_end,
+            "status": self.status,
+            "created_at": self.created_at,
+        }
+
+
+@dataclass
+class Challenge:
+    """挑战机制 - 类 Optimistic Rollup dispute"""
+    challenge_id: str = field(default_factory=lambda: uuid.uuid4().hex[:16])
+    task_id: str = ""
+    challenger_address: str = ""
+    reason: str = ""
+    evidence: str = ""
+    status: ChallengeStatus = ChallengeStatus.PENDING
+    created_at: float = field(default_factory=time.time)
+    resolved_at: float = 0
+    resolution: str = ""  # "uphold" / "reject" / "slash"
+    slash_amount: float = 0
+
+    def to_dict(self) -> Dict:
+        return {
+            "challenge_id": self.challenge_id,
+            "task_id": self.task_id,
+            "challenger_address": self.challenger_address,
+            "reason": self.reason,
+            "status": self.status.value,
+            "created_at": self.created_at,
+            "resolved_at": self.resolved_at,
+            "resolution": self.resolution,
+            "slash_amount": self.slash_amount,
+        }
+
+
+@dataclass
+class EconomicModel:
+    """经济模型 - stake/slash/reward 绑定"""
+    base_reward: float = 1.0
+    reputation_multiplier: float = 1.0
+    accuracy_multiplier: float = 1.0
+    violation_factor: float = 0.3  # slash 比例
+    min_stake: float = 100.0
+    challenge_window_seconds: float = 3600  # 1小时
+
+    def compute_reward(self, base: float, rep: float, acc: float) -> float:
+        return base * rep * acc
+
+    def compute_penalty(self, stake: float) -> float:
+        return stake * self.violation_factor
+
+    def to_dict(self) -> Dict:
+        return {
+            "base_reward": self.base_reward,
+            "reputation_multiplier": self.reputation_multiplier,
+            "accuracy_multiplier": self.accuracy_multiplier,
+            "violation_factor": self.violation_factor,
+            "min_stake": self.min_stake,
+            "challenge_window_seconds": self.challenge_window_seconds,
+        }
+
+
 # ============== TEE 管理器 ==============
 
 class TEEManager:
@@ -314,6 +453,9 @@ class TEEManager:
             local_verifier=self._local_verify_attestation_payload
         )
         self._kms_audit_log: List[Dict[str, Any]] = []
+        # V1.0 扩展存储
+        self.attestation_records: Dict[str, AttestationRecord] = {}
+        self.challenges: Dict[str, Challenge] = {}
     
     def register_tee_node(
         self,
@@ -358,6 +500,88 @@ class TEEManager:
     def get_node(self, node_id: str) -> Optional[TEENode]:
         with self._lock:
             return self.nodes.get(node_id)
+
+    # ============== V1.0 P0 扩展接口 ==============
+
+    def submit_execution_root(self, task_id: str, code: bytes, data: bytes, 
+                               params: bytes, output: bytes) -> ExecutionRoot:
+        """提交执行路径哈希绑定（模块2）"""
+        root = ExecutionRoot.from_task(task_id, code, data, params, output)
+        root.compute()
+        return root
+
+    def register_attestation_record(self, task_id: str, execution_root: str,
+                                     miner_address: str, attestation_report_id: str,
+                                     challenge_window_seconds: float = 3600) -> AttestationRecord:
+        """注册链上 Attestation 记录（模块6）"""
+        record = AttestationRecord(
+            task_id=task_id,
+            execution_root=execution_root,
+            miner_address=miner_address,
+            attestation_report_id=attestation_report_id,
+            challenge_window_end=time.time() + challenge_window_seconds,
+        )
+        self.attestation_records[task_id] = record
+        return record
+
+    def get_attestation_record(self, task_id: str) -> Optional[AttestationRecord]:
+        return self.attestation_records.get(task_id)
+
+    def verify_execution_root(self, task_id: str, provided_root: str) -> bool:
+        """验证 ExecutionRoot 是否匹配"""
+        record = self.attestation_records.get(task_id)
+        if not record:
+            return False
+        return record.execution_root == provided_root
+
+    def submit_challenge(self, task_id: str, challenger_address: str,
+                         reason: str, evidence: str = "") -> Challenge:
+        """提交挑战（模块7）"""
+        challenge = Challenge(
+            task_id=task_id,
+            challenger_address=challenger_address,
+            reason=reason,
+            evidence=evidence,
+            status=ChallengeStatus.CHALLENGED,
+        )
+        self.challenges[challenge.challenge_id] = challenge
+        return challenge
+
+    def resolve_challenge(self, challenge_id: str, resolution: str,
+                          slash_amount: float = 0) -> bool:
+        """解决挑战并执行惩罚"""
+        challenge = self.challenges.get(challenge_id)
+        if not challenge:
+            return False
+        challenge.status = ChallengeStatus.RESOLVED
+        challenge.resolved_at = time.time()
+        challenge.resolution = resolution
+        challenge.slash_amount = slash_amount
+        return True
+
+    def get_challenge(self, challenge_id: str) -> Optional[Challenge]:
+        return self.challenges.get(challenge_id)
+
+    def get_active_challenges(self, task_id: str = None) -> List[Challenge]:
+        """获取活跃挑战列表"""
+        result = []
+        for ch in self.challenges.values():
+            if task_id and ch.task_id != task_id:
+                continue
+            if ch.status in (ChallengeStatus.PENDING, ChallengeStatus.CHALLENGED):
+                result.append(ch)
+        return result
+
+    def compute_economic_reward(self, base: float, reputation_score: float,
+                                accuracy: float) -> float:
+        """计算经济奖励（模块8）"""
+        model = EconomicModel()
+        return model.compute_reward(base, reputation_score, accuracy)
+
+    def compute_slash_penalty(self, stake: float) -> float:
+        """计算惩罚金额（模块8）"""
+        model = EconomicModel()
+        return model.compute_penalty(stake)
 
     def list_nodes(
         self,
