@@ -69,15 +69,6 @@ class VerificationStatus(Enum):
     FAILED = "failed"
     DISPUTED = "disputed"
 
-
-class ChallengeStatus(Enum):
-    """挑战状态 - V1.0 核心"""
-    PENDING = "pending"
-    CHALLENGED = "challenged"
-    RESOLVED = "resolved"
-    EXPIRED = "expired"
-
-
 class ChallengeStatus(Enum):
     """挑战状态 - V1.0 核心"""
     PENDING = "pending"
